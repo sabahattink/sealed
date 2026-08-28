@@ -1,0 +1,624 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelContext } from "@mcp-b/webmcp-types";
+import { SealedApplication } from "@/components/SealedApplication";
+import {
+  createMockPrivateVault,
+  DEMO_CANARY_SECRET,
+} from "@/lib/private-vault";
+import {
+  ACTIVE_TOOL_NAMES_BY_STEP,
+  createSealedToolset,
+  getActiveSealedToolNames,
+  registerSealedTools,
+  SEALED_TOOL_NAMES,
+} from "@/lib/sealed-tools";
+import { createSealedStore, sealedStore } from "@/lib/sealed-store";
+
+beforeEach(() => {
+  sealedStore.reset();
+  delete (document as Document & { modelContext?: ModelContext }).modelContext;
+});
+
+function createTestToolset() {
+  const store = createSealedStore();
+  const vault = createMockPrivateVault();
+  return {
+    store,
+    vault,
+    tools: createSealedToolset({ vault, store }),
+  };
+}
+
+describe("sealed WebMCP tool contracts", () => {
+  it("exposes exactly the six allowed tools and never submit_application", () => {
+    const { tools } = createTestToolset();
+
+    expect(Object.keys(tools)).toEqual([...SEALED_TOOL_NAMES]);
+    expect(SEALED_TOOL_NAMES).not.toContain("submit_application");
+    expect(Object.keys(tools)).not.toContain("submit_application");
+    for (const names of Object.values(ACTIVE_TOOL_NAMES_BY_STEP)) {
+      expect(names.length).toBeLessThanOrEqual(6);
+      expect(names).not.toContain("submit_application");
+    }
+  });
+
+  it("marks read tools read-only and every mutation as state-changing", () => {
+    const { tools } = createTestToolset();
+    const readOnlyTools = [tools.get_application_context];
+    const mutationTools = [
+      tools.set_public_fields,
+      tools.flag_uncertain,
+      tools.request_review,
+      tools.request_private_binding,
+      tools.evaluate_private_requirement,
+    ];
+
+    for (const tool of readOnlyTools) {
+      expect(tool.annotations).toEqual({
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      });
+    }
+    for (const tool of mutationTools) {
+      expect(tool.annotations).toEqual({
+        readOnlyHint: false,
+        untrustedContentHint: false,
+      });
+    }
+  });
+
+  it("keeps every schema deterministic and keeps sealed fields out of public writes", () => {
+    const { tools } = createTestToolset();
+
+    expect(tools.get_application_context.inputSchema).toMatchObject({
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    });
+    expect(tools.flag_uncertain.inputSchema).toMatchObject({
+      properties: {
+        topic: {
+          enum: ["income_eligibility", "passport_number", "property_details"],
+        },
+      },
+      required: ["topic"],
+      additionalProperties: false,
+    });
+    expect(tools.set_public_fields.inputSchema).toMatchObject({
+      properties: {
+        fields: {
+          minProperties: 1,
+          additionalProperties: false,
+        },
+      },
+      required: ["fields"],
+      additionalProperties: false,
+    });
+    expect(JSON.stringify(tools.set_public_fields.inputSchema)).not.toContain(
+      "passport_number",
+    );
+    expect(JSON.stringify(tools.set_public_fields.inputSchema)).not.toContain(
+      "monthly_income",
+    );
+  });
+
+  it("keeps private-tool selection guidance explicit", () => {
+    const { tools } = createTestToolset();
+
+    expect(tools.get_application_context.description).toContain(
+      "whenever the agent needs the current rental application context before acting",
+    );
+    expect(tools.get_application_context.description).toContain(
+      "fixed section requirements, open question IDs",
+    );
+    expect(tools.get_application_context.description).toContain(
+      "never returns raw vault values; income remains withheld",
+    );
+    expect(tools.evaluate_private_requirement.description).toContain(
+      "whenever the user asks whether they meet the rental income requirement while keeping income private",
+    );
+    expect(tools.evaluate_private_requirement.description).toContain(
+      "the only safe way for an agent to determine rental-income eligibility without accessing the raw private income",
+    );
+    expect(tools.evaluate_private_requirement.description).toContain(
+      "evaluates the private income locally",
+    );
+    expect(tools.evaluate_private_requirement.description).toContain(
+      "returns only whether the requirement is satisfied or not satisfied",
+    );
+    expect(tools.evaluate_private_requirement.description).toContain(
+      "must not infer or guess the result from visible page content",
+    );
+    expect(tools.request_private_binding.description).toContain(
+      "whenever the user asks to bind the approved passport number into the rental application while keeping the raw value private",
+    );
+    expect(tools.request_private_binding.description).toContain(
+      "only supported way for an agent to request this private binding",
+    );
+    expect(tools.request_review.description).toContain("never submits the application");
+  });
+
+  it("executes every non-approval contract through the shared store", async () => {
+    const { store, tools, vault } = createTestToolset();
+
+    const context = await tools.get_application_context.execute({});
+    const publicFields = await tools.set_public_fields.execute({
+      fields: {
+        email: "aylin@example.com",
+        full_name: "Aylin Mammadova",
+      },
+    });
+    const uncertainty = await tools.flag_uncertain.execute({
+      topic: "property_details",
+    });
+    const review = await tools.request_review.execute({});
+    const income = await tools.evaluate_private_requirement.execute({
+      requirement: "income_3x_rent",
+    });
+
+    expect(context.structuredContent).toMatchObject({
+      status: "ok",
+      private_fields: { income: "withheld" },
+      sections: {
+        applicant_details: {
+          required_public_fields: ["full_name", "email"],
+        },
+        home_details: {
+          required_public_fields: [
+            "property_address",
+            "monthly_rent",
+            "move_in_date",
+          ],
+        },
+        privacy_review: {
+          private_capabilities: ["income_3x_rent", "passport_number"],
+        },
+      },
+      open_questions: expect.arrayContaining(["income_3x_rent"]),
+    });
+    expect(publicFields.structuredContent).toEqual({
+      status: "updated",
+      updated_fields: ["email", "full_name"],
+      private_fields: "unchanged",
+    });
+    expect(uncertainty.structuredContent).toEqual({
+      status: "flagged",
+      topic: "property_details",
+    });
+    expect(review.structuredContent).toEqual({
+      status: "review_requested",
+      submitted: false,
+    });
+    expect(income.structuredContent).toEqual({
+      status: "satisfied",
+      requirement: "income_3x_rent",
+      value: "withheld",
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.application.fullName).toBe("Aylin Mammadova");
+    expect(snapshot.reviewState).toBe("requested");
+    expect(snapshot.uncertainTopics).toEqual(["property_details"]);
+    expect(snapshot.activity).toHaveLength(5);
+    expect(snapshot.privacyTrace).toHaveLength(1);
+    expect(JSON.stringify({ context, publicFields, uncertainty, review, income, snapshot })).not.toContain(
+      DEMO_CANARY_SECRET,
+    );
+    expect(JSON.stringify({ context, publicFields, uncertainty, review, income, snapshot })).not.toContain(
+      String(vault.monthlyIncome),
+    );
+  });
+
+  it("rejects sealed-field attempts through set_public_fields before state changes", async () => {
+    const { store, tools, vault } = createTestToolset();
+    const before = store.getSnapshot();
+
+    expect(() =>
+      tools.set_public_fields.execute({
+        fields: {
+          passport_number: "attempted-write",
+        },
+      } as never),
+    ).toThrow("sealed fields cannot be edited");
+
+    const after = store.getSnapshot();
+    expect(after.application).toEqual(before.application);
+    expect(after.activity).toHaveLength(0);
+    expect(JSON.stringify(after)).not.toContain(vault.passportNumber);
+  });
+
+  it("requests human review without creating a submission state", async () => {
+    const { store, tools } = createTestToolset();
+
+    const result = await tools.request_review.execute({});
+
+    expect(result.structuredContent).toEqual({
+      status: "review_requested",
+      submitted: false,
+    });
+    expect(store.getSnapshot().reviewState).toBe("requested");
+    expect(store.getSnapshot()).not.toHaveProperty("submitted");
+    expect(store.getSnapshot().activity[0]).toMatchObject({
+      toolName: "request_review",
+      redactedOutput: { status: "review_requested", submitted: false },
+    });
+    expect(SEALED_TOOL_NAMES).not.toContain("submit_application");
+  });
+
+  it("records all agent calls while privacy trace stays private-operation-only", async () => {
+    const { store, tools } = createTestToolset();
+    await tools.get_application_context.execute({});
+    await tools.set_public_fields.execute({
+      fields: { property_address: "24 River Road, Baku" },
+    });
+    await tools.flag_uncertain.execute({ topic: "income_eligibility" });
+    await tools.request_review.execute({});
+    await tools.evaluate_private_requirement.execute({
+      requirement: "income_3x_rent",
+    });
+
+    expect(store.getSnapshot().activity.map((entry) => entry.toolName)).toEqual([
+      "evaluate_private_requirement",
+      "request_review",
+      "flag_uncertain",
+      "set_public_fields",
+      "get_application_context",
+    ]);
+    expect(store.getSnapshot().privacyTrace).toHaveLength(1);
+    expect(store.getSnapshot().privacyTrace[0].capability).toBe(
+      "income_3x_rent",
+    );
+  });
+
+  it("changes the tool surface by step and after human review is requested", () => {
+    const store = createSealedStore();
+
+    expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
+      ACTIVE_TOOL_NAMES_BY_STEP[1],
+    );
+    store.setWizardStep(2);
+    expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
+      ACTIVE_TOOL_NAMES_BY_STEP[2],
+    );
+    store.setWizardStep(3);
+    expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
+      ACTIVE_TOOL_NAMES_BY_STEP[3],
+    );
+    store.requestReview();
+    expect(getActiveSealedToolNames(store.getSnapshot())).toEqual([
+      "get_application_context",
+      "flag_uncertain",
+    ]);
+  });
+
+  it("uses AbortSignal ownership for the current registration surface", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    const modelContext = { registerTool } as unknown as ModelContext;
+    const { tools } = createTestToolset();
+    const controller = new AbortController();
+
+    await registerSealedTools(
+      modelContext,
+      tools,
+      controller.signal,
+      ACTIVE_TOOL_NAMES_BY_STEP[3],
+    );
+
+    expect(registerTool).toHaveBeenCalledTimes(5);
+    expect(registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(
+      [...ACTIVE_TOOL_NAMES_BY_STEP[3]],
+    );
+    expect(registerTool.mock.calls.every(([, options]) => options.signal === controller.signal)).toBe(
+      true,
+    );
+    controller.abort();
+    expect(controller.signal.aborted).toBe(true);
+    expect(registerTool.mock.calls.map(([tool]) => tool.name)).not.toContain(
+      "submit_application",
+    );
+  });
+
+  it("keeps the registered private handlers on the shared state path", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    const modelContext = { registerTool } as unknown as ModelContext;
+    const { store, tools, vault } = createTestToolset();
+
+    await registerSealedTools(modelContext, tools, undefined, ACTIVE_TOOL_NAMES_BY_STEP[1]);
+    const registeredRequirement = registerTool.mock.calls.find(
+      ([tool]) => tool.name === "evaluate_private_requirement",
+    )?.[0];
+    const registeredBinding = registerTool.mock.calls.find(
+      ([tool]) => tool.name === "request_private_binding",
+    )?.[0];
+    expect(registeredRequirement).toBeDefined();
+    expect(registeredBinding).toBeDefined();
+    if (!registeredRequirement || !registeredBinding) {
+      throw new Error("Expected both private handlers to be registered");
+    }
+
+    const requirement = await registeredRequirement.execute({
+      requirement: "income_3x_rent",
+    });
+    const bindingPromise = registeredBinding.execute({
+      field: "passport_number",
+    });
+    expect(store.getSnapshot().pendingBindingApproval?.field).toBe(
+      "passport_number",
+    );
+    store.resolvePrivateBindingApproval(true);
+    const binding = await bindingPromise;
+
+    expect(requirement.structuredContent).toEqual({
+      status: "satisfied",
+      requirement: "income_3x_rent",
+      value: "withheld",
+    });
+    expect(binding.structuredContent).toEqual({
+      status: "bound",
+      field: "passport_number",
+      value: "withheld",
+    });
+    expect(store.getSnapshot().application.requirementResult).toBe("satisfied");
+    expect(store.getSnapshot().application.privateBindings.passport_number).toBe(
+      "bound",
+    );
+    expect(store.getSnapshot().activity).toHaveLength(2);
+    expect(store.getSnapshot().privacyTrace).toHaveLength(2);
+    expect(JSON.stringify({ requirement, binding, snapshot: store.getSnapshot() })).not.toContain(
+      DEMO_CANARY_SECRET,
+    );
+    expect(JSON.stringify({ requirement, binding, snapshot: store.getSnapshot() })).not.toContain(
+      String(vault.monthlyIncome),
+    );
+  });
+});
+
+describe("sealed application UI and native registration", () => {
+  it("shows the current step surface count only after registration resolves", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+
+    render(<SealedApplication />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 5 tools",
+      ),
+    );
+    expect(screen.getByTestId("active-tool-count")).toHaveTextContent("5");
+    expect(registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(
+      [...ACTIVE_TOOL_NAMES_BY_STEP[1]],
+    );
+  });
+
+  it("unregisters the old surface and registers the new surface as the wizard advances", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+
+    render(<SealedApplication />);
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 5 tools",
+      ),
+    );
+    const firstSignal = registerTool.mock.calls[0][1].signal as AbortSignal;
+
+    fireEvent.change(screen.getByLabelText("Full name"), {
+      target: { value: "Aylin Mammadova" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /email address/i }), {
+      target: { value: "aylin@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 6 tools",
+      ),
+    );
+    expect(firstSignal.aborted).toBe(true);
+    const secondSignal = registerTool.mock.calls[5][1].signal as AbortSignal;
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 5 tools",
+      ),
+    );
+    expect(secondSignal.aborted).toBe(true);
+    expect(screen.getByRole("heading", { name: "Review before you finish" })).toBeVisible();
+    expect(registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
+      ...ACTIVE_TOOL_NAMES_BY_STEP[1],
+      ...ACTIVE_TOOL_NAMES_BY_STEP[2],
+      ...ACTIVE_TOOL_NAMES_BY_STEP[3],
+    ]);
+  });
+
+  it("keeps the three-step wizard public-only and makes private actions agent-first", () => {
+    render(<SealedApplication />);
+
+    expect(screen.getByRole("heading", { name: "Tell us about you" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /your details/i })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
+    expect(screen.getByText("Ask the connected agent to check")).toBeVisible();
+    expect(screen.getByText("Agent can request a binding")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /check income eligibility/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /bind passport locally/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /passport/i })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Full name"), {
+      target: { value: "Aylin Mammadova" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /email address/i }), {
+      target: { value: "aylin@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(screen.getByRole("heading", { name: "Review before you finish" })).toBeVisible();
+    expect(screen.getByText("Private checks are ready")).toBeVisible();
+    expect(screen.queryByText("Application copilot")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("debug-controls")).not.toBeInTheDocument();
+  });
+
+  it("reflects a registered requirement handler in the visible shared state", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+
+    render(<SealedApplication />);
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 5 tools",
+      ),
+    );
+    const registeredTool = registerTool.mock.calls.find(
+      ([tool]) => tool.name === "evaluate_private_requirement",
+    )?.[0];
+    expect(registeredTool).toBeDefined();
+    if (!registeredTool) throw new Error("Requirement tool was not registered");
+
+    const result = await registeredTool.execute({
+      requirement: "income_3x_rent",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("income-requirement-result")).toHaveTextContent(
+        "Qualified",
+      );
+      expect(screen.getByTestId("activity-count")).toHaveTextContent("1 call");
+      expect(screen.getByTestId("privacy-count")).toHaveTextContent("1 op");
+      expect(screen.getByTestId("last-tool-response")).toHaveTextContent(
+        "Requirement satisfied",
+      );
+    });
+    expect(result.structuredContent).toEqual({
+      status: "satisfied",
+      requirement: "income_3x_rent",
+      value: "withheld",
+    });
+    expect(screen.getByTestId("actual-income-status")).toHaveTextContent(
+      "Withheld from agent",
+    );
+  });
+
+  it("opens approval for a registered binding handler and then updates both panels", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+
+    render(<SealedApplication />);
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 5 tools",
+      ),
+    );
+    const registeredTool = registerTool.mock.calls.find(
+      ([tool]) => tool.name === "request_private_binding",
+    )?.[0];
+    expect(registeredTool).toBeDefined();
+    if (!registeredTool) throw new Error("Binding tool was not registered");
+
+    const resultPromise = registeredTool.execute({ field: "passport_number" });
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: /approve binding/i }));
+    const result = await resultPromise;
+
+    await waitFor(() => {
+      expect(screen.getByTestId("passport-binding-status")).toHaveTextContent(
+        "Bound locally",
+      );
+      expect(screen.getByTestId("activity-count")).toHaveTextContent("1 call");
+      expect(screen.getByTestId("privacy-count")).toHaveTextContent("1 op");
+    });
+    expect(result.structuredContent).toEqual({
+      status: "bound",
+      field: "passport_number",
+      value: "withheld",
+    });
+  });
+});
+
+describe("rental application privacy boundary", () => {
+  it("keeps vault values out of every registered payload, rendered DOM, input, and trace", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+    const vault = createMockPrivateVault();
+
+    render(<SealedApplication />);
+    await waitFor(() =>
+      expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
+        "Site tools ready · 5 tools",
+      ),
+    );
+    const bindingTool = registerTool.mock.calls.find(
+      ([tool]) => tool.name === "request_private_binding",
+    )?.[0];
+    const requirementTool = registerTool.mock.calls.find(
+      ([tool]) => tool.name === "evaluate_private_requirement",
+    )?.[0];
+    expect(bindingTool).toBeDefined();
+    expect(requirementTool).toBeDefined();
+    if (!bindingTool || !requirementTool) {
+      throw new Error("Expected both private tools");
+    }
+
+    const bindingPromise = bindingTool.execute({ field: "passport_number" });
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: /approve binding/i }));
+    const bindingResult = await bindingPromise;
+    const requirementResult = await requirementTool.execute({
+      requirement: "income_3x_rent",
+    });
+
+    const inputValues = Array.from(document.querySelectorAll("input")).map(
+      (input) => input.value,
+    );
+    const renderedHtml = document.documentElement.outerHTML;
+    const registeredPayload = JSON.stringify(registerTool.mock.calls);
+    const visibleText = document.body.textContent ?? "";
+    const boundarySnapshot = JSON.stringify(sealedStore.getSnapshot());
+
+    expect(JSON.stringify({ bindingResult, requirementResult, registeredPayload })).not.toContain(
+      vault.passportNumber,
+    );
+    expect(JSON.stringify({ bindingResult, requirementResult, registeredPayload })).not.toContain(
+      String(vault.monthlyIncome),
+    );
+    expect(visibleText).not.toContain(vault.passportNumber);
+    expect(visibleText).not.toContain(String(vault.monthlyIncome));
+    expect(renderedHtml).not.toContain(vault.passportNumber);
+    expect(renderedHtml).not.toContain(String(vault.monthlyIncome));
+    expect(inputValues).not.toContain(vault.passportNumber);
+    expect(inputValues).not.toContain(String(vault.monthlyIncome));
+    expect(boundarySnapshot).not.toContain(DEMO_CANARY_SECRET);
+    expect(boundarySnapshot).not.toContain(String(vault.monthlyIncome));
+    expect(visibleText).toContain("WebMCP activity");
+    expect(visibleText).toContain("Privacy trace");
+    expect(visibleText).toContain("DOM exposure");
+    expect(visibleText).toContain("Actual income");
+    expect(visibleText).toContain("Withheld from agent");
+    expect(visibleText).toContain("actor · agent");
+    expect(visibleText).toContain('"value":"withheld"');
+    expect(visibleText).not.toContain("submit_application");
+    expect(
+      screen.getByText("Raw private values remain withheld.", { exact: true }),
+    ).toBeVisible();
+  });
+});

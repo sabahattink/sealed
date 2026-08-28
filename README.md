@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sealed
 
-## Getting Started
+Sealed is a focused rental application demo for the OpenAI WebMCP Challenge. It
+demonstrates a narrow contract:
 
-First, run the development server:
+> The page may use private data to complete an approved operation, while the
+> agent receives only a safe decision or status.
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Useful checks:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm test
+npm run lint
+npm run build
+```
 
-## Learn More
+## Deploy to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+This is a standard Next.js app and does not require environment variables for
+the demo. From this directory, authenticate with Vercel and create a preview
+deployment:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npx vercel login
+npx vercel --yes
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Use `npx vercel --yes --prod` only when a production deployment is intended.
 
-## Deploy on Vercel
+## WebMCP proof
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The client component feature-detects `document.modelContext` and registers a
+step-aware tool surface through the current imperative API:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `get_application_context`: reads the current public draft, fixed section
+  requirements, open question IDs, and redacted private statuses in one response.
+- `set_public_fields`: updates only public application fields.
+- `flag_uncertain`: records one fixed topic for human attention.
+- `request_review`: moves the draft to human review; it never submits anything.
+
+- `request_private_binding`: asks for human approval, marks the passport field as
+  locally bound, and returns `value: "withheld"`.
+- `evaluate_private_requirement`: compares private monthly income with the
+  public monthly rent and returns only `satisfied` or `not_satisfied`.
+
+Step 1 keeps the two validated private tools available for the real ChatGPT
+demo, Step 2 adds `request_review`, and Step 3 removes public-field mutation
+while keeping the private checks available. After `request_review`, only the
+context read and uncertainty flag remain. The active surface never exceeds six
+tools. Each surface is owned by a fresh `AbortController`; aborting the previous
+signal removes the old registrations before the current surface is exposed.
+
+Browsers without WebMCP support show that status in the header. The user-facing
+private cards explain the agent-first flow; a private passport binding opens the
+same human approval modal before the shared state changes. Developer-only
+handler controls are available only in development mode.
+
+The application is presented as a three-step rental wizard. The Agent access
+card shows the active site-tool count and current surface, while the WebMCP
+Activity panel records every agent call with redacted input/output. The Privacy
+Trace panel records only private operations.
+
+The application state, activity log, privacy trace, and last tool response live
+in one external store (`lib/sealed-store.ts`). Both the developer debug controls
+and the native WebMCP `execute` handlers dispatch through that same reducer, so
+a real agent call updates the visible page without a refresh.
+
+## Privacy invariant
+
+The tests verify that the mock vault values do not appear in:
+
+- tool inputs or structured/text tool outputs;
+- rendered page text;
+- HTML input values.
+
+The vault is intentionally a client-side mock for a hackathon demo. It is not
+a production secret store: anyone with browser developer tools can inspect the
+demo bundle. A production version would replace it with a browser-managed
+credential/vault boundary and explicit user approval.
+
+## Deliberate MVP boundary
+
+There is no backend, LLM integration, application submission, authentication,
+or real vault. The page models one rental application template, exposes six
+allowlisted tools through a dynamic surface, and deliberately has no
+`submit_application` tool.
