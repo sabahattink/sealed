@@ -2,12 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelContext } from "@mcp-b/webmcp-types";
 import { SealedApplication } from "@/components/SealedApplication";
-import {
-  createMockPrivateVault,
-  DEMO_CANARY_SECRET,
-  MEMBERSHIP_BIRTH_DATE,
-  MEMBERSHIP_CANARY_SECRET,
-} from "@/lib/private-vault";
+import { createMockPrivateVault } from "@/lib/private-vault";
+import { createTestPrivateVault, DEMO_CANARY_SECRET, MEMBERSHIP_BIRTH_DATE, MEMBERSHIP_CANARY_SECRET } from "@/tests/fixtures/private-vault";
 import {
   ACTIVE_TOOL_NAMES_BY_STEP,
   ACTIVE_TOOL_NAMES_BY_SCENARIO,
@@ -27,7 +23,7 @@ beforeEach(() => {
 describe("reusable scenario privacy architecture", () => {
   function createMembershipToolset() {
     const store = createSealedStore("membership");
-    const vault = createMockPrivateVault();
+    const vault = createTestPrivateVault();
     return { store, vault, tools: createSealedToolset({ store, vault }) };
   }
 
@@ -59,12 +55,12 @@ describe("reusable scenario privacy architecture", () => {
     const binding = await bindingPromise;
     const serialized = JSON.stringify({ requirement, binding, snapshot: store.getSnapshot() });
 
-    expect(requirement.structuredContent).toEqual({
+    expect(requirement.structuredContent).toMatchObject({
       status: "satisfied",
       requirement: "age_18_plus",
       value: "withheld",
     });
-    expect(binding.structuredContent).toEqual({
+    expect(binding.structuredContent).toMatchObject({
       status: "bound",
       field: "identity_number",
       value: "withheld",
@@ -103,7 +99,7 @@ describe("reusable scenario privacy architecture", () => {
       expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
         ACTIVE_TOOL_NAMES_BY_SCENARIO[scenarioId][2],
       );
-      store.requestReview();
+      store.requestReview({ ref: "test-review", scenarioId, demoSession: store.getSnapshot().demoSession, requirement: scenarioId === "rental" ? "income_3x_rent" : "age_18_plus", requirementStatus: "satisfied", bindingRef: "test-binding", submitted: false });
       expect(getActiveSealedToolNames(store.getSnapshot())).toEqual([
         "get_application_context",
         "flag_uncertain",
@@ -119,10 +115,9 @@ describe("reusable scenario privacy architecture", () => {
     const pending = tools.request_private_binding.execute({ field: "identity_number" });
     store.setPublicField("display_name", "Aylin");
     store.setWizardStep(3);
-    store.requestReview();
 
     store.reset();
-    await expect(pending).rejects.toThrow("cancelled by demo reset");
+    await expect(pending).rejects.toThrow("stale for the active demo session");
     expect(store.getSnapshot()).toMatchObject({
       scenarioId: "membership",
       currentStep: 1,
@@ -187,7 +182,7 @@ describe("reusable scenario privacy architecture", () => {
 
     expect(observable).not.toContain(MEMBERSHIP_CANARY_SECRET);
     expect(observable).not.toContain(MEMBERSHIP_BIRTH_DATE);
-    expect(document.body.textContent).toContain("Privacy trace");
+    expect(document.body.textContent).toContain("Boundary Ledger");
     expect(document.body.textContent).toContain("age_18_plus");
   });
 });
@@ -278,37 +273,11 @@ describe("sealed WebMCP tool contracts", () => {
   it("keeps private-tool selection guidance explicit", () => {
     const { tools } = createTestToolset();
 
-    expect(tools.get_application_context.description).toContain(
-      "whenever the agent needs the current rental application context before acting",
-    );
-    expect(tools.get_application_context.description).toContain(
-      "fixed section requirements, open question IDs",
-    );
-    expect(tools.get_application_context.description).toContain(
-      "never returns raw vault values; income remains withheld",
-    );
-    expect(tools.evaluate_private_requirement.description).toContain(
-      "whenever the user asks whether they meet the rental income requirement while keeping income private",
-    );
-    expect(tools.evaluate_private_requirement.description).toContain(
-      "the only safe way for an agent to determine rental-income eligibility without accessing the raw private income",
-    );
-    expect(tools.evaluate_private_requirement.description).toContain(
-      "evaluates the private income locally",
-    );
-    expect(tools.evaluate_private_requirement.description).toContain(
-      "returns only whether the requirement is satisfied or not satisfied",
-    );
-    expect(tools.evaluate_private_requirement.description).toContain(
-      "must not infer or guess the result from visible page content",
-    );
-    expect(tools.request_private_binding.description).toContain(
-      "whenever the user asks to bind the approved passport number into the rental application while keeping the raw value private",
-    );
-    expect(tools.request_private_binding.description).toContain(
-      "only supported way for an agent to request this private binding",
-    );
-    expect(tools.request_review.description).toContain("never submits the application");
+    expect(tools.get_application_context.description).toContain("guarded egress");
+    expect(tools.evaluate_private_requirement.description).toContain("once per demo session");
+    expect(tools.evaluate_private_requirement.description).toContain("duplicate evaluation is rejected");
+    expect(tools.request_private_binding.description).toContain("opaque session-bound artifact");
+    expect(tools.request_review.description).toContain("never submits");
   });
 
   it("executes every non-approval contract through the shared store", async () => {
@@ -324,10 +293,15 @@ describe("sealed WebMCP tool contracts", () => {
     const uncertainty = await tools.flag_uncertain.execute({
       topic: "property_details",
     });
-    const review = await tools.request_review.execute({});
-    const income = await tools.evaluate_private_requirement.execute({
+    store.setWizardStep(2);
+    const stepTwoTools = createSealedToolset({ store, vault });
+    const income = await stepTwoTools.evaluate_private_requirement.execute({
       requirement: "income_3x_rent",
     });
+    const bindingPromise = stepTwoTools.request_private_binding.execute({ field: "passport_number" });
+    store.resolvePrivateBindingApproval(true);
+    await bindingPromise;
+    const review = await stepTwoTools.request_review.execute({});
 
     expect(context.structuredContent).toMatchObject({
       status: "ok",
@@ -358,11 +332,11 @@ describe("sealed WebMCP tool contracts", () => {
       status: "flagged",
       topic: "property_details",
     });
-    expect(review.structuredContent).toEqual({
+    expect(review.structuredContent).toMatchObject({
       status: "review_requested",
       submitted: false,
     });
-    expect(income.structuredContent).toEqual({
+    expect(income.structuredContent).toMatchObject({
       status: "satisfied",
       requirement: "income_3x_rent",
       value: "withheld",
@@ -372,8 +346,8 @@ describe("sealed WebMCP tool contracts", () => {
     expect(snapshot.workflow.publicFields.full_name).toBe("Aylin Mammadova");
     expect(snapshot.reviewState).toBe("requested");
     expect(snapshot.uncertainTopics).toEqual(["property_details"]);
-    expect(snapshot.activity).toHaveLength(5);
-    expect(snapshot.privacyTrace).toHaveLength(1);
+    expect(snapshot.activity).toHaveLength(6);
+    expect(snapshot.privacyTrace).toHaveLength(2);
     expect(JSON.stringify({ context, publicFields, uncertainty, review, income, snapshot })).not.toContain(
       DEMO_CANARY_SECRET,
     );
@@ -401,11 +375,16 @@ describe("sealed WebMCP tool contracts", () => {
   });
 
   it("requests human review without creating a submission state", async () => {
-    const { store, tools } = createTestToolset();
+    const { store, vault } = createTestToolset();
+    store.setWizardStep(2);
+    const stepTwoTools = createSealedToolset({ store, vault });
+    await stepTwoTools.evaluate_private_requirement.execute({ requirement: "income_3x_rent" });
+    const bindingPromise = stepTwoTools.request_private_binding.execute({ field: "passport_number" });
+    store.resolvePrivateBindingApproval(true);
+    await bindingPromise;
+    const result = await stepTwoTools.request_review.execute({});
 
-    const result = await tools.request_review.execute({});
-
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       status: "review_requested",
       submitted: false,
     });
@@ -425,22 +404,22 @@ describe("sealed WebMCP tool contracts", () => {
       fields: { property_address: "24 River Road, Baku" },
     });
     await tools.flag_uncertain.execute({ topic: "income_eligibility" });
-    await tools.request_review.execute({});
     await tools.evaluate_private_requirement.execute({
       requirement: "income_3x_rent",
     });
+    const bindingPromise = tools.request_private_binding.execute({ field: "passport_number" });
+    store.resolvePrivateBindingApproval(true);
+    await bindingPromise;
 
     expect(store.getSnapshot().activity.map((entry) => entry.toolName)).toEqual([
+      "request_private_binding",
       "evaluate_private_requirement",
-      "request_review",
       "flag_uncertain",
       "set_public_fields",
       "get_application_context",
     ]);
-    expect(store.getSnapshot().privacyTrace).toHaveLength(1);
-    expect(store.getSnapshot().privacyTrace[0].capability).toBe(
-      "income_3x_rent",
-    );
+    expect(store.getSnapshot().privacyTrace).toHaveLength(2);
+    expect(store.getSnapshot().privacyTrace.map((entry) => entry.capability)).toEqual(["passport_number", "income_3x_rent"]);
   });
 
   it("changes the tool surface by step and after human review is requested", () => {
@@ -457,7 +436,7 @@ describe("sealed WebMCP tool contracts", () => {
     expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
       ACTIVE_TOOL_NAMES_BY_STEP[3],
     );
-    store.requestReview();
+    store.requestReview({ ref: "test-review", scenarioId: "rental", demoSession: store.getSnapshot().demoSession, requirement: "income_3x_rent", requirementStatus: "satisfied", bindingRef: "test-binding", submitted: false });
     expect(getActiveSealedToolNames(store.getSnapshot())).toEqual([
       "get_application_context",
       "flag_uncertain",
@@ -521,12 +500,12 @@ describe("sealed WebMCP tool contracts", () => {
     store.resolvePrivateBindingApproval(true);
     const binding = await bindingPromise;
 
-    expect(requirement.structuredContent).toEqual({
+    expect(requirement.structuredContent).toMatchObject({
       status: "satisfied",
       requirement: "income_3x_rent",
       value: "withheld",
     });
-    expect(binding.structuredContent).toEqual({
+    expect(binding.structuredContent).toMatchObject({
       status: "bound",
       field: "passport_number",
       value: "withheld",
@@ -675,7 +654,7 @@ describe("sealed application UI and native registration", () => {
         "Requirement satisfied",
       );
     });
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       status: "satisfied",
       requirement: "income_3x_rent",
       value: "withheld",
@@ -716,7 +695,7 @@ describe("sealed application UI and native registration", () => {
       expect(screen.getByTestId("activity-count")).toHaveTextContent("1 call");
       expect(screen.getByTestId("privacy-count")).toHaveTextContent("1 op");
     });
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       status: "bound",
       field: "passport_number",
       value: "withheld",
@@ -731,7 +710,7 @@ describe("rental application privacy boundary", () => {
       configurable: true,
       value: { registerTool },
     });
-    const vault = createMockPrivateVault();
+    const vault = createTestPrivateVault();
 
     render(<SealedApplication />);
     await waitFor(() =>
@@ -782,8 +761,8 @@ describe("rental application privacy boundary", () => {
     expect(boundarySnapshot).not.toContain(DEMO_CANARY_SECRET);
     expect(boundarySnapshot).not.toContain(String(vault.monthlyIncome));
     expect(visibleText).toContain("WebMCP activity");
-    expect(visibleText).toContain("Privacy trace");
-    expect(visibleText).toContain("DOM exposure");
+    expect(visibleText).toContain("Boundary Ledger");
+    expect(visibleText).toContain("Guarded WebMCP payload");
     expect(visibleText).toContain("Actual income");
     expect(visibleText).toContain("Withheld from agent");
     expect(visibleText).toContain("actor · agent");

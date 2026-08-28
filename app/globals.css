@@ -64,6 +64,7 @@ button:disabled {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+select:focus-visible,
 summary:focus-visible {
   outline: 3px solid rgba(58, 107, 135, 0.38);
   outline-offset: 3px;
@@ -224,6 +225,10 @@ summary:focus-visible {
   color: var(--ink-soft);
   font-size: 17px;
   line-height: 1.6;
+}
+
+.hero-lede strong {
+  color: var(--ink);
 }
 
 .hero-promise {
@@ -2046,11 +2051,22 @@ summary:focus-visible {
 }
 
 .scenario-button {
+  display: grid;
+  gap: 2px;
   border-radius: 8px;
   color: #a9c9be;
   font-size: 12px;
   font-weight: 750;
   padding: 9px 13px;
+}
+
+.scenario-button small {
+  color: inherit;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
+  text-transform: uppercase;
 }
 
 .scenario-button:hover,
@@ -2062,6 +2078,64 @@ summary:focus-visible {
   background: #e8fff7;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
   color: #153d34;
+}
+
+.boundary-diagram {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border, #dfe4ea);
+  border-radius: 14px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.15fr) auto minmax(0, 1fr);
+  margin: 18px 0;
+  padding: 12px;
+}
+
+.boundary-node {
+  align-items: flex-start;
+  align-self: stretch;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  text-align: center;
+}
+
+.boundary-node-guard {
+  background: var(--surface-green);
+  border-color: #bdd8c5;
+}
+
+.boundary-node small,
+.boundary-node em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.boundary-node strong {
+  align-items: center;
+  color: var(--ink);
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  justify-content: center;
+}
+
+.boundary-diagram > b {
+  color: var(--forest);
+  font-size: 18px;
+}
+
+@media (max-width: 720px) {
+  .boundary-diagram { grid-template-columns: 1fr; }
+  .boundary-diagram > b { transform: rotate(90deg); text-align: center; }
 }
 
 .demo-reset {
@@ -2105,7 +2179,18 @@ summary:focus-visible {
   }
 
   .demo-reset {
-    display: none;
+    min-height: 38px;
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar-meta {
+    gap: 7px;
+  }
+
+  .demo-reset {
+    font-size: 9px;
   }
 }
 

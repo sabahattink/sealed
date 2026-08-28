@@ -64,9 +64,11 @@ export type ScenarioDefinition = Readonly<{
     label: string;
     privateValueLabel: string;
     guidance: string;
+    publicDependencies: readonly PublicFieldId[];
     evaluate: (
       publicFields: WorkflowState["publicFields"],
       vault: MockPrivateVault,
+      now?: Date,
     ) => Exclude<RequirementResult, "not_checked">;
   }>;
   binding: Readonly<{
@@ -119,6 +121,7 @@ export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDefinition>> = {
       label: "Income requirement",
       privateValueLabel: "Actual income",
       guidance: "Check whether private income is at least three times public rent without revealing income.",
+      publicDependencies: ["monthly_rent"],
       evaluate: (fields, vault) =>
         vault.monthlyIncome >= Number(fields.monthly_rent ?? 0) * 3
           ? "satisfied"
@@ -161,9 +164,10 @@ export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDefinition>> = {
       label: "Adult membership requirement",
       privateValueLabel: "Date of birth",
       guidance: "Check whether the private date of birth proves age 18 or older without revealing the date.",
-      evaluate: (_fields, vault) => {
+      publicDependencies: [],
+      evaluate: (_fields, vault, now = new Date()) => {
         const birth = new Date(`${vault.dateOfBirth}T00:00:00Z`);
-        const cutoff = new Date("2026-08-28T00:00:00Z");
+        const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
         cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 18);
         return birth <= cutoff ? "satisfied" : "not_satisfied";
       },

@@ -1,135 +1,106 @@
 # Sealed
 
-Sealed is a reusable privacy boundary for agentic web applications, built for
-the OpenAI WebMCP Challenge. It demonstrates that an agent can use a private
-value to reach an approved decision or binding without receiving the raw value.
-Two small workflows use the same six WebMCP capabilities and shared store:
+Sealed is a privacy-boundary demo for the OpenAI WebMCP Challenge. It shows how
+an agent can use a private value through a narrow page-owned capability while
+the raw value is withheld from agent-visible WebMCP payloads.
 
-- **Rental application (primary demo):** private income eligibility and an
-  approved passport binding.
-- **Membership enrollment:** private adult-age verification and an approved
-  identity binding.
+- **Rental:** fixed private `income_3x_rent` predicate and approved passport binding.
+- **Membership:** fixed private `age_18_plus` predicate and approved identity binding.
 
-**Production demo:** [https://sealed-ten-chi.vercel.app](https://sealed-ten-chi.vercel.app)
+Production demo: [sealed-ten-chi.vercel.app](https://sealed-ten-chi.vercel.app)
 
-## Core WebMCP insight
+## Privacy architecture
 
-The page owns a small local mock vault. WebMCP gives the agent narrow,
-state-aware capabilities over that page:
+The page registers six state-aware tools with `document.modelContext`, the
+WebMCP surface available in compatible builds of ChatGPT Desktop. An
+`AbortController` retires the previous registration surface when workflow state
+changes, while every handler also validates the active scenario and demo
+session at execution time.
 
-- `evaluate_private_requirement` executes the active scenario's declarative
-  predicate locally and returns only `satisfied` or `not_satisfied`, with the
-  underlying value marked `withheld`.
-- `request_private_binding` asks the user to approve the active scenario's
-  local binding and returns only `bound`; the private identifier is never
-  returned.
+All successful tool responses pass through one guarded-egress chokepoint. It
+checks both `content` and `structuredContent` for the session's raw private
+values and fails closed. Errors are reduced to an allowlisted message or a
+generic boundary error. Tool schemas and descriptions are checked as well.
 
-WebMCP is essential because the agent calls capabilities implemented by the
-page that already holds the private context. A normal chat or form integration
-would need the value to cross into the agent's context. Sealed instead exposes
-the operation and its safe result, not the secret.
+The UI's **Boundary Ledger** displays the actual sanitized payload released by
+each private operation:
 
-## Human approval boundary
+`local private value → guarded WebMCP boundary → agent-visible safe result`
 
-A private binding does not change state immediately. The agent can request it,
-but the page opens a human approval dialog. Only **Approve binding** completes
-the local operation. Moving either workflow to human review is deliberately not
-submission: `request_review` returns `submitted: false`, and there is no submit
-or enrollment tool.
+This is selective disclosure through application architecture, not a claim of
+cryptographic proof.
 
-## Dynamic tool surface
+## Fixed predicates and anti-probing
 
-The registered tool set follows the application state, reducing accidental or
-irrelevant actions:
+`evaluate_private_requirement` accepts only the active fixed enum. Each demo
+session permits one evaluation. On first use, public predicate dependencies are
+snapshotted; rental's `monthly_rent` is then immutable. Duplicate evaluation,
+old handlers, and handlers from a previous scenario fail sealed. **Reset demo**
+starts a fresh session and evaluation budget.
 
-| State (both scenarios) | Available tools |
+## Consequential local binding
+
+`request_private_binding` opens a human approval dialog. Before approval there
+is no artifact. After approval, the raw credential is consumed locally with a
+random salt and nonce to create an opaque, session-bound binding artifact. The
+agent receives only `bound`, `value: withheld`, and a non-secret reference.
+
+`request_review` requires both that artifact and the private predicate verdict.
+It consumes their safe local metadata to create a review packet with
+`submitted: false`. It does not submit, send, enroll, or contact a verifier.
+There is no submit/enroll tool. After review, only context and uncertainty tools
+remain registered.
+
+## Tool surface
+
+| Workflow state | Tools |
 | --- | --- |
-| Step 1 — public profile | context, public fields, uncertainty, private binding, private predicate |
-| Step 2 — workflow details | Step 1 tools plus human review |
-| Step 3 — review | context, uncertainty, human review, private binding, private predicate |
+| Step 1 | context, public fields, uncertainty, binding, predicate |
+| Step 2 | Step 1 plus review |
+| Step 3 | context, uncertainty, review, binding, predicate |
 | Review requested | context and uncertainty only |
 
-Current tool names:
+Tool names: `get_application_context`, `set_public_fields`, `flag_uncertain`,
+`request_review`, `request_private_binding`, and
+`evaluate_private_requirement`.
 
-- `get_application_context` — reads the active scenario, public draft data, requirements, open
-  questions, and redacted private statuses.
-- `set_public_fields` — updates allowlisted public fields only.
-- `flag_uncertain` — records a fixed topic for human attention.
-- `request_review` — moves the draft to human review without submitting it.
-- `request_private_binding` — requests the active declarative private binding.
-- `evaluate_private_requirement` — evaluates the active declarative predicate
-  locally and returns only the decision.
+## Threat model and limitations
 
-## Architecture
+This demo protects against raw private values entering agent-visible WebMCP
+tool payloads and the demo's redacted activity/ledger paths. It also limits a
+simple predicate-probing attack by fixing the predicate and allowing one
+session-bound evaluation.
 
-- Next.js 16 and React 19 client application.
-- `document.modelContext` registers the active WebMCP tools; an
-  `AbortController` removes the previous surface when state changes.
-- Declarative scenario definitions provide public-field allowlists, sections,
-  private predicates, private bindings, and uncertainty topics.
-- One external store and reducer back the human UI, WebMCP handlers, activity
-  log, privacy trace, and last safe tool response.
-- A client-side mock vault supplies demo-only private values to both scenarios.
-- WebMCP Activity records redacted agent calls; Privacy Trace records private
-  operations and whether values crossed the DOM or WebMCP boundary.
+It does **not** protect against malicious page JavaScript, browser developer
+tools, direct browser/profile access, compromised dependencies, or a user who
+can inspect page memory. It provides no cryptographic verification, zero-
+knowledge proof, TEE, attestation, identity assurance, landlord/verifier trust,
+or production vault guarantee. There is no backend, authentication, database,
+multi-user isolation, or real submission workflow. Demo private values are
+generated in browser memory for each session and must not be treated as real
+credentials.
 
-## Privacy invariants
-
-- Raw income, birth date, passport, and identity values never appear in tool
-  inputs or outputs.
-- Raw private values are not rendered into the page or HTML inputs.
-- `set_public_fields` rejects private or sealed fields.
-- Private predicates return only a decision.
-- Private bindings require human approval and return only status.
-- Review never submits or sends an application.
-
-These invariants are covered by automated tests, but this remains a browser
-prototype rather than a production security boundary. Sealed demonstrates
-**selective disclosure and local private execution**; it is not cryptographic
-zero-knowledge, and the bundled client-side fixtures are inspectable by a user
-with developer access.
-
-## Run locally
+## Local verification
 
 ```bash
 npm install
-npm run dev
-```
-
-Open `http://localhost:3000`. No environment variables are required.
-
-Verification commands:
-
-```bash
 npm test
 npm run lint
+npm run typecheck
 npm run build
 ```
 
-## Test with ChatGPT Desktop
+Open `http://localhost:3000` after `npm run dev`.
 
-1. Open the ChatGPT Desktop built-in browser.
-2. Navigate to https://sealed-ten-chi.vercel.app and confirm that the page shows
+## ChatGPT Desktop demo
+
+1. Open the production URL in the ChatGPT Desktop built-in browser and confirm
    **Site tools ready**.
-3. Keep **Rental** selected. Ask: `Use get_application_context and tell me which public fields are missing.`
-4. Ask: `Use set_public_fields to set full name to "Aylin Mammadova" and email to "aylin@example.com".`
-5. Continue to the property step, then ask:
-   `Use evaluate_private_requirement to check income_3x_rent without revealing income.`
-6. Ask: `Use request_private_binding for passport_number without revealing the raw value.`
-   Approve the page's binding dialog.
-7. Continue to review and ask:
-   `Use request_review. Do not submit or send the application.`
-8. Confirm the WebMCP Activity entries, two private Privacy Trace operations,
-   `submitted: false`, and the two-tool post-review surface.
-9. Click **Reset demo**, switch to **Membership**, and ask:
-   `Check age_18_plus without revealing my date of birth, then request the identity_number binding.`
-10. Approve the binding and confirm the same Activity, Privacy Trace, withheld
-    responses, and dynamic tool behavior in the second workflow.
-
-## Prototype scope
-
-Sealed is a hackathon demo, not real rental screening, identity verification,
-age assurance, a production secret vault, or an eligibility decision system. It has no backend,
-authentication, real credential storage, landlord integration, or submission
-flow. The bundled private values are inspectable demo fixtures and must not be
-treated as production secrets.
+2. In Rental, set public name/email, evaluate `income_3x_rent`, request the
+   passport binding, and approve it in the page.
+3. Move to Step 2 or Step 3 and call `request_review`. Confirm the returned
+   review packet says `submitted: false` and the surface becomes two tools.
+4. Confirm the Boundary Ledger shows the guarded predicate and binding payloads.
+5. Reset, switch to Membership, and repeat with `age_18_plus` and
+   `identity_number`.
+6. Confirm reset/session invalidation and a clean browser console.
