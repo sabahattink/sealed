@@ -526,6 +526,48 @@ describe("sealed WebMCP tool contracts", () => {
 });
 
 describe("sealed application UI and native registration", () => {
+  it.each([
+    { scenarioId: "rental" as const, requirement: "income_3x_rent" as const, field: "passport_number" as const },
+    { scenarioId: "membership" as const, requirement: "age_18_plus" as const, field: "identity_number" as const },
+  ])("derives Step 3 and post-review safety copy from the $scenarioId tool surface", async ({ scenarioId, requirement, field }) => {
+    sealedStore.setScenario(scenarioId);
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+
+    render(<SealedApplication />);
+    await waitFor(() => expect(registerTool).toHaveBeenCalledTimes(5));
+    sealedStore.setWizardStep(3);
+    await waitFor(() => expect(registerTool).toHaveBeenCalledTimes(10));
+
+    expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("Review surface · 5 tools active");
+    expect(screen.getByTestId("review-tool-surface")).not.toHaveTextContent("2 tools remain");
+    expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("No submit or enrollment tool is exposed.");
+
+    const stepThreeRegistrations = registerTool.mock.calls.slice(5).map(([tool]) => tool);
+    const requirementTool = stepThreeRegistrations.find((tool) => tool.name === "evaluate_private_requirement");
+    const bindingTool = stepThreeRegistrations.find((tool) => tool.name === "request_private_binding");
+    const reviewTool = stepThreeRegistrations.find((tool) => tool.name === "request_review");
+    if (!requirementTool || !bindingTool || !reviewTool) throw new Error("Expected Step 3 private and review tools");
+
+    await requirementTool.execute({ requirement });
+    const bindingPromise = bindingTool.execute({ field });
+    sealedStore.resolvePrivateBindingApproval(true);
+    await bindingPromise;
+    const review = await reviewTool.execute({});
+
+    expect(review.structuredContent).toMatchObject({ status: "review_requested", submitted: false });
+    await waitFor(() => expect(screen.getByTestId("site-tools-status")).toHaveTextContent("Site tools ready · 2 tools"));
+    expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("Safety lock · 2 tools remain");
+    expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("Only Workflow context and Flag uncertainty stay available.");
+    expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("No submit or enrollment tool is exposed.");
+    expect(screen.getByTestId("active-tool-count")).toHaveTextContent("2");
+    expect(screen.getAllByText("Unavailable in current state")).toHaveLength(2);
+    expect(registerTool.mock.calls.slice(-2).map(([tool]) => tool.name)).toEqual(["get_application_context", "flag_uncertain"]);
+  });
+
   it("shows the current step surface count only after registration resolves", async () => {
     const registerTool = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(document, "modelContext", {

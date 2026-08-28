@@ -1,4 +1,5 @@
 import type { PrivateFieldId, PublicFieldId, RequirementId, ScenarioId, UncertaintyTopic } from "@/lib/scenarios";
+import type { GuardedToolResponse } from "@/lib/safe-egress";
 
 export type ActivityToolName = "get_application_context" | "set_public_fields" | "flag_uncertain" | "request_review" | "request_private_binding" | "evaluate_private_requirement";
 export type RedactedToolInput = Record<string, never> | { fields: readonly PublicFieldId[] } | { topic: UncertaintyTopic } | { field: PrivateFieldId } | { requirement: RequirementId };
@@ -18,7 +19,7 @@ export type BoundaryLedgerEntry = Readonly<{
   scenario: ScenarioId;
   capability: PrivateFieldId | RequirementId;
   localOperation: "predicate_evaluation" | "opaque_binding";
-  guardedPayload: Readonly<Record<string, string>>;
+  guardedPayload: Readonly<Record<string, unknown>>;
 }>;
 
 let eventSequence = 0;
@@ -28,11 +29,11 @@ export function createActivityEntry({ toolName, input, output }: { toolName: Act
   return { id: nextEventId("activity"), toolName, timestamp: new Date().toISOString(), actor: "agent", redactedInput: input, redactedOutput: output };
 }
 
-export function createBoundaryLedgerEntry({ scenario, capability, localOperation, guardedPayload }: {
+export function createBoundaryLedgerEntry<T extends Record<string, unknown>>({ scenario, capability, localOperation, guardedResponse }: {
   scenario: ScenarioId;
   capability: BoundaryLedgerEntry["capability"];
   localOperation: BoundaryLedgerEntry["localOperation"];
-  guardedPayload: BoundaryLedgerEntry["guardedPayload"];
+  guardedResponse: GuardedToolResponse<T>;
 }): BoundaryLedgerEntry {
-  return { id: nextEventId("boundary"), timestamp: new Date().toISOString(), scenario, capability, localOperation, guardedPayload };
+  return { id: nextEventId("boundary"), timestamp: new Date().toISOString(), scenario, capability, localOperation, guardedPayload: guardedResponse.structuredContent };
 }

@@ -31,6 +31,19 @@ describe("central safe egress", () => {
     expect(() => guardSafeEgress({ content: [{ type: "text", text: "safe" }], structuredContent: { leaked: vault.identityNumber } }, vault)).toThrow(SAFE_EGRESS_ERROR);
   });
 
+  it("allows income digits inside opaque references but blocks exposed numeric income", () => {
+    const vault = createTestPrivateVault();
+    const opaqueRef = `binding_a${vault.monthlyIncome}f`;
+    const sharedSafeValue = { status: "safe" };
+    expect(() => guardSafeEgress({ content: [{ type: "text", text: "safe" }], structuredContent: { binding_ref: opaqueRef } }, vault)).not.toThrow();
+    expect(() => guardSafeEgress({ content: [{ type: "text", text: "safe" }], structuredContent: { first: sharedSafeValue, second: sharedSafeValue } }, vault)).not.toThrow();
+    expect(() => guardSafeEgress({ content: [{ type: "text", text: "safe" }], structuredContent: { monthly_income: vault.monthlyIncome } }, vault)).toThrow(SAFE_EGRESS_ERROR);
+    expect(() => guardSafeEgress({ content: [{ type: "text", text: `Exposed income: ${vault.monthlyIncome}` }], structuredContent: { status: "unsafe" } }, vault)).toThrow(SAFE_EGRESS_ERROR);
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => guardSafeEgress({ content: [{ type: "text", text: "safe" }], structuredContent: circular }, vault)).toThrow(SAFE_EGRESS_ERROR);
+  });
+
   it("sanitizes raw private values from synchronous and async errors", async () => {
     const vault = createTestPrivateVault();
     expect(sanitizeBoundaryError(new Error(vault.passportNumber), vault).message).toBe(SAFE_EGRESS_ERROR);
@@ -114,10 +127,31 @@ describe("consequential binding and review packet", () => {
     store.resolvePrivateBindingApproval(true);
     const result = await pending;
     const artifact = store.getSnapshot().bindingArtifacts.passport_number;
-    expect(artifact?.ref).toMatch(/^binding_[a-f0-9]{32}$/);
-    expect(artifact?.localCommitment).toBeTruthy();
+    expect(artifact).toEqual({
+      ref: expect.stringMatching(/^binding_[a-f0-9]{32}$/),
+      field: "passport_number",
+      scenarioId: "rental",
+      demoSession: 0,
+      createdAt: expect.any(String),
+    });
     expect(result.structuredContent.binding_ref).toBe(artifact?.ref);
     expect(JSON.stringify({ result, artifact })).not.toContain(vault.passportNumber);
+  });
+
+  it("records the exact guarded structuredContent object for each private operation", async () => {
+    const { store, tools } = runtime();
+    const requirement = await tools.evaluate_private_requirement.execute({ requirement: "income_3x_rent" });
+    expect(store.getSnapshot().privacyTrace[0].guardedPayload).toBe(requirement.structuredContent);
+    expect(store.getSnapshot().privacyTrace[0].guardedPayload).toEqual({
+      status: "satisfied",
+      requirement: "income_3x_rent",
+      value: "withheld",
+      evaluation: "sealed_for_session",
+    });
+
+    const binding = await approveBinding(store, tools, "passport_number");
+    expect(store.getSnapshot().privacyTrace[0].guardedPayload).toBe(binding.structuredContent);
+    expect(store.getSnapshot().privacyTrace[0].guardedPayload).toEqual(binding.structuredContent);
   });
 
   it("rejects duplicate binding and invalidates artifacts on reset and scenario change", async () => {

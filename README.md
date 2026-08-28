@@ -100,9 +100,10 @@ There is no agent-facing reset capability.
 `request_private_binding` does not immediately mutate the workflow. It opens a
 page-owned approval dialog and waits for an explicit human decision.
 
-Before approval, no binding artifact exists. After approval, the private
-credential is consumed locally to create an opaque, session-bound binding
-artifact. The agent receives only safe metadata such as:
+Before approval, no binding artifact exists. The page first verifies that the
+credential is locally available. After approval it creates a random,
+session-bound opaque artifact that does not encode the raw credential. The
+agent receives only safe metadata such as:
 
 ```json
 {

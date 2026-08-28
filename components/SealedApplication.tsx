@@ -78,9 +78,18 @@ export function SealedApplication() {
   const vaultSessionRef = useRef<{ demoSession: number; vault: ReturnType<typeof createMockPrivateVault> } | null>(null);
   const approvalDialogRef = useRef<HTMLDivElement>(null);
   const [webMcpStatus, setWebMcpStatus] = useState<WebMcpStatus>("checking");
-  const [registeredToolCount, setRegisteredToolCount] = useState(0);
   const [stepError, setStepError] = useState<string | null>(null);
-  const visibleToolCount = webMcpStatus === "ready" ? registeredToolCount : activeToolNames.length;
+  const visibleToolCount = activeToolNames.length;
+  const activeToolLabels = activeToolNames.map((name) => baseToolLabels[name]);
+  const canEvaluatePrivateRequirement = activeToolNames.includes("evaluate_private_requirement");
+  const canRequestPrivateBinding = activeToolNames.includes("request_private_binding");
+  const noSubmitTool = !activeToolNames.some((name) => name.includes("submit"));
+  const reviewSurfaceHeading = reviewState === "requested"
+    ? `Safety lock · ${visibleToolCount} tools remain`
+    : `Review surface · ${visibleToolCount} tools active`;
+  const reviewSurfaceDetail = reviewState === "requested"
+    ? `Only ${activeToolLabels.join(" and ")} stay available. ${noSubmitTool ? "No submit or enrollment tool is exposed." : "A submit-capable tool is active."}`
+    : `The current review tools remain available. ${noSubmitTool ? "No submit or enrollment tool is exposed." : "A submit-capable tool is active."}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -92,7 +101,7 @@ export function SealedApplication() {
     const tools = createSealedToolset({ vault: vaultSessionRef.current.vault, store: sealedStore });
     toolsRef.current = tools;
     queueMicrotask(() => {
-      if (!cancelled) { setRegisteredToolCount(0); setWebMcpStatus("registering"); }
+      if (!cancelled) setWebMcpStatus("registering");
     });
     const modelContext = document.modelContext;
     if (!modelContext) {
@@ -102,13 +111,10 @@ export function SealedApplication() {
     const controller = new AbortController();
     registerSealedTools(modelContext, tools, controller.signal, toolNames)
       .then(() => {
-        if (!cancelled && !controller.signal.aborted) {
-          setRegisteredToolCount(toolNames.length);
-          setWebMcpStatus("ready");
-        }
+        if (!cancelled && !controller.signal.aborted) setWebMcpStatus("ready");
       })
       .catch(() => {
-        if (!cancelled) { setRegisteredToolCount(0); setWebMcpStatus("error"); }
+        if (!cancelled) setWebMcpStatus("error");
       });
     return () => { cancelled = true; toolsRef.current = null; controller.abort(); };
   }, [activeToolSurfaceKey]);
@@ -163,7 +169,7 @@ export function SealedApplication() {
         <div className="topbar-meta">
           <button className="demo-reset" data-testid="reset-demo" onClick={resetDemo} type="button">Reset demo</button>
           <span className="trust-pill"><Icon name="lock" size={13} /> Private by default</span>
-          <span className={`mcp-status mcp-status-${webMcpStatus}`} data-testid="site-tools-status"><span className="status-dot" /><span className="mcp-status-label">{statusLabel(webMcpStatus, registeredToolCount)}</span></span>
+          <span className={`mcp-status mcp-status-${webMcpStatus}`} data-testid="site-tools-status"><span className="status-dot" /><span className="mcp-status-label">{statusLabel(webMcpStatus, visibleToolCount)}</span></span>
         </div>
       </header>
 
@@ -222,21 +228,21 @@ export function SealedApplication() {
             ) : (
               <section className="step-panel" aria-labelledby="review-title">
                 <div className="step-panel-heading"><span className="step-panel-icon"><Icon name="shield" size={20} /></span><div><p className="step-index">Step 03</p><h3 id="review-title">{scenarioId === "rental" ? "Review before you finish" : "Review membership verification"}</h3><strong>Private checks are ready</strong><p>The agent can request safe operations; only a human can take any final action.</p></div></div>
-                <div className="review-banner"><span><Icon name="lock" size={17} /></span><div><strong>Safety lock · 2 tools remain</strong><p>Only Workflow context and Flag uncertainty stay available. WebMCP exposes no submit or enrollment tool.</p></div></div>
+                <div className="review-banner" data-testid="review-tool-surface"><span><Icon name="lock" size={17} /></span><div><strong>{reviewSurfaceHeading}</strong><p>{reviewSurfaceDetail}</p></div></div>
               </section>
             )}
             {stepError && <p className="step-error" role="alert">{stepError}</p>}
-            <div className="wizard-footer"><span>{reviewState === "requested" ? `Safety lock active · ${activeToolNames.length} read/flag tools only` : `Step ${currentStep} of 3`}</span><div className="wizard-actions">{currentStep > 1 && <button className="button button-quiet" onClick={() => moveToStep((currentStep - 1) as WorkflowStep)} type="button"><Icon name="arrow-left" size={16} /> Back</button>}{currentStep < 3 ? <button className="button button-primary" onClick={() => moveToStep((currentStep + 1) as WorkflowStep)} type="button">Continue <Icon name="arrow-right" size={16} /></button> : <button className="button button-quiet" onClick={() => moveToStep(1)} type="button">Edit {scenario.reviewLabel}</button>}</div></div>
+            <div className="wizard-footer"><span>{reviewState === "requested" ? `Safety lock active · ${visibleToolCount} read/flag tools only` : `Step ${currentStep} of 3`}</span><div className="wizard-actions">{currentStep > 1 && <button className="button button-quiet" onClick={() => moveToStep((currentStep - 1) as WorkflowStep)} type="button"><Icon name="arrow-left" size={16} /> Back</button>}{currentStep < 3 ? <button className="button button-primary" onClick={() => moveToStep((currentStep + 1) as WorkflowStep)} type="button">Continue <Icon name="arrow-right" size={16} /></button> : <button className="button button-quiet" onClick={() => moveToStep(1)} type="button">Edit {scenario.reviewLabel}</button>}</div></div>
           </div>
         </form>
 
         <aside className="trust-rail" aria-label="Privacy and WebMCP status">
           <section className="rail-card connection-card">
             <div className="rail-card-heading"><span className="rail-icon rail-icon-blue"><Icon name="activity" size={19} /></span><div><p className="section-kicker">WebMCP connection</p><h2>Agent access</h2></div></div>
-            <div className={`connection-status connection-status-${webMcpStatus}`}><span className="connection-status-dot" /><div><strong>{statusLabel(webMcpStatus, registeredToolCount)}</strong><span>{webMcpStatus === "ready" ? "Available to the connected agent" : webMcpStatus === "unsupported" ? "Open in a WebMCP-capable browser" : "Checking the page connection"}</span></div></div>
+            <div className={`connection-status connection-status-${webMcpStatus}`}><span className="connection-status-dot" /><div><strong>{statusLabel(webMcpStatus, visibleToolCount)}</strong><span>{webMcpStatus === "ready" ? "Available to the connected agent" : webMcpStatus === "unsupported" ? "Open in a WebMCP-capable browser" : "Checking the page connection"}</span></div></div>
             <div className="active-tools-summary" data-testid="active-tool-count"><span className="active-tools-number">{visibleToolCount}</span><div><strong>{webMcpStatus === "ready" ? "Active site tools" : "Tools in this workflow state"}</strong><span>{webMcpStatus === "ready" ? "Available to the connected agent" : "Connect WebMCP to activate this surface"}</span></div></div>
             <div className="tool-surface"><span className="tool-surface-label">Current surface</span><div className="tool-surface-list">{activeToolNames.map((name) => <span className="tool-chip" key={name}>{baseToolLabels[name]}</span>)}</div></div>
-            <div className="access-list"><div className="access-row access-row-allowed"><span><Icon name="check" size={14} /></span><div><strong>Evaluate a private predicate</strong><small>Decision only</small></div></div><div className="access-row access-row-allowed"><span><Icon name="check" size={14} /></span><div><strong>Request a sealed binding</strong><small>Human approval required</small></div></div><div className="access-row access-row-blocked"><span><Icon name="close" size={14} /></span><div><strong>Read raw private values</strong><small>Never available to the agent</small></div></div></div>
+            <div className="access-list"><div className={`access-row ${canEvaluatePrivateRequirement ? "access-row-allowed" : "access-row-blocked"}`}><span><Icon name={canEvaluatePrivateRequirement ? "check" : "close"} size={14} /></span><div><strong>Evaluate a private predicate</strong><small>{canEvaluatePrivateRequirement ? "Decision only" : "Unavailable in current state"}</small></div></div><div className={`access-row ${canRequestPrivateBinding ? "access-row-allowed" : "access-row-blocked"}`}><span><Icon name={canRequestPrivateBinding ? "check" : "close"} size={14} /></span><div><strong>Request a sealed binding</strong><small>{canRequestPrivateBinding ? "Human approval required" : "Unavailable in current state"}</small></div></div><div className="access-row access-row-blocked"><span><Icon name="close" size={14} /></span><div><strong>Read raw private values</strong><small>Never available to the agent</small></div></div></div>
           </section>
 
           <section className={`rail-card eligibility-card${isSatisfied ? " eligibility-card-qualified" : ""}${isNotSatisfied ? " eligibility-card-not-qualified" : ""}`} data-testid="eligibility-card">
@@ -252,7 +258,7 @@ export function SealedApplication() {
             <div className="rail-card-heading"><span className="rail-icon rail-icon-amber"><Icon name="lock" size={19} /></span><div><p className="section-kicker">Private binding</p><h2>{scenario.binding.label}</h2></div><span className={`field-status${bindingStatus === "bound" ? " field-status-bound" : ""}`} data-testid={scenarioId === "rental" ? "passport-binding-status" : "identity-binding-status"}>{bindingStatus === "bound" ? "Bound locally" : pendingBindingApproval ? "Approval requested" : "Not connected"}</span></div>
             <div className="sealed-field" aria-label={`${scenario.binding.label} sealed; raw value withheld`}><span className="sealed-field-icon"><Icon name="shield" size={18} /></span><div><strong>Value sealed</strong><span>Stored locally · never rendered</span></div><span className="sealed-field-state">{bindingStatus === "bound" ? "Bound" : "Approval needed"}</span></div>
             <div className="agent-action-note agent-action-note-amber"><span className="agent-action-note-icon"><Icon name="lock" size={16} /></span><div><strong>Agent can request a binding</strong><span>You approve it here before anything changes.</span></div></div>
-            <p className="sealed-note">The approved credential is consumed locally to create an opaque session artifact. Guarded egress returns only <code>bound</code>, <code>value: withheld</code>, and a non-secret reference.</p>
+            <p className="sealed-note">The page verifies the credential is locally available; approval creates a random opaque session artifact that does not encode the raw value. Guarded egress returns only <code>bound</code>, <code>value: withheld</code>, and a non-secret reference.</p>
             {bindingArtifacts[scenario.binding.id] && <div className="last-response" data-testid="binding-artifact"><div className="last-response-heading"><span>Opaque artifact</span><span>Session local</span></div><p><code>{bindingArtifacts[scenario.binding.id]?.ref}</code></p></div>}
             {reviewPacket && <div className="last-response" data-testid="review-packet"><div className="last-response-heading"><span>Review packet</span><span>submitted: false</span></div><p><code>{reviewPacket.ref}</code></p></div>}
           </section>
@@ -272,7 +278,7 @@ export function SealedApplication() {
 
       <footer className="page-footer"><span className="footer-brand"><span className="footer-mark"><Icon name="shield" size={13} /></span> Sealed</span><span>Two scenarios · one privacy boundary · no submission</span><span>Raw private values remain withheld.</span></footer>
 
-      {pendingBindingApproval && <div className="modal-backdrop" role="presentation"><div aria-describedby="approval-dialog-description" aria-labelledby="approval-dialog-title" aria-modal="true" className="approval-dialog" ref={approvalDialogRef} role="dialog"><div className="approval-dialog-header"><span className="approval-dialog-icon"><Icon name="lock" size={22} /></span><button aria-label="Close approval dialog" className="icon-button" onClick={() => sealedStore.resolvePrivateBindingApproval(false)} type="button"><Icon name="close" size={18} /></button></div><p className="section-kicker">Human approval required</p><h2 id="approval-dialog-title">Allow one local binding?</h2><p id="approval-dialog-description" className="approval-dialog-copy">The agent requested permission to use your {scenario.binding.label.toLowerCase()} inside this page. Approval changes local state and creates an opaque session artifact; guarded egress returns no raw value.</p><div className="approval-dialog-proof"><div><Icon name="check" size={15} /> Raw credential stays page-local</div><div><Icon name="check" size={15} /> Nothing is placed in a rendered input</div><div><Icon name="check" size={15} /> Agent receives only status plus a non-secret reference</div></div><div className="approval-dialog-actions"><button className="button button-quiet" onClick={() => sealedStore.resolvePrivateBindingApproval(false)} type="button">Deny request</button><button className="button button-primary" data-autofocus onClick={() => sealedStore.resolvePrivateBindingApproval(true)} type="button">Approve binding locally <Icon name="check" size={16} /></button></div></div></div>}
+      {pendingBindingApproval && <div className="modal-backdrop" role="presentation"><div aria-describedby="approval-dialog-description" aria-labelledby="approval-dialog-title" aria-modal="true" className="approval-dialog" ref={approvalDialogRef} role="dialog"><div className="approval-dialog-header"><span className="approval-dialog-icon"><Icon name="lock" size={22} /></span><button aria-label="Close approval dialog" className="icon-button" onClick={() => sealedStore.resolvePrivateBindingApproval(false)} type="button"><Icon name="close" size={18} /></button></div><p className="section-kicker">Human approval required</p><h2 id="approval-dialog-title">Allow one local binding?</h2><p id="approval-dialog-description" className="approval-dialog-copy">The agent requested a local availability check for your {scenario.binding.label.toLowerCase()}. Approval changes local state and creates a random opaque session artifact that does not encode the raw value; guarded egress returns no raw value.</p><div className="approval-dialog-proof"><div><Icon name="check" size={15} /> Raw credential stays page-local</div><div><Icon name="check" size={15} /> Nothing is placed in a rendered input</div><div><Icon name="check" size={15} /> Agent receives only status plus a non-secret reference</div></div><div className="approval-dialog-actions"><button className="button button-quiet" onClick={() => sealedStore.resolvePrivateBindingApproval(false)} type="button">Deny request</button><button className="button button-primary" data-autofocus onClick={() => sealedStore.resolvePrivateBindingApproval(true)} type="button">Approve binding locally <Icon name="check" size={16} /></button></div></div></div>}
     </main>
   );
 }

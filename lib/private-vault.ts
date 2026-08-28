@@ -13,7 +13,6 @@ export type LocalBindingArtifact = Readonly<{
   scenarioId: ScenarioId;
   demoSession: number;
   createdAt: string;
-  localCommitment: string;
 }>;
 
 function randomBytes(length: number): Uint8Array {
@@ -24,15 +23,6 @@ function randomBytes(length: number): Uint8Array {
 
 function randomHex(length: number): string {
   return Array.from(randomBytes(length), (value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-function localCommitment(value: string, salt: string): string {
-  let hash = 0x811c9dc5;
-  for (const character of `${salt}:${value}`) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `${(hash >>> 0).toString(16).padStart(8, "0")}${randomHex(4)}`;
 }
 
 /** Demo-only, session-local private values. This is not a production vault. */
@@ -47,22 +37,18 @@ export function createMockPrivateVault(now = new Date()): MockPrivateVault {
   });
 }
 
-/** Consumes a raw local credential and emits only an opaque, session-bound artifact. */
-export function createLocalBindingArtifact({ value, field, scenarioId, demoSession, now = new Date() }: {
-  value: string;
+/** Creates random session metadata after local credential availability and human approval have been verified by the caller. */
+export function createLocalBindingArtifact({ field, scenarioId, demoSession, now = new Date() }: {
   field: PrivateFieldId;
   scenarioId: ScenarioId;
   demoSession: number;
   now?: Date;
 }): LocalBindingArtifact {
-  if (!value) throw new Error("Private binding value unavailable");
-  const salt = randomHex(16);
   return Object.freeze({
     ref: `binding_${randomHex(16)}`,
     field,
     scenarioId,
     demoSession,
     createdAt: now.toISOString(),
-    localCommitment: localCommitment(value, salt),
   });
 }

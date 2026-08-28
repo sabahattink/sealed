@@ -110,8 +110,6 @@ function getOpenQuestionIds(state: SealedState) {
   return questions;
 }
 function randomReviewRef() { return `review_${crypto.randomUUID().replaceAll("-", "")}`; }
-function privateCredential(vault: MockPrivateVault, field: PrivateFieldId) { return field === "passport_number" ? vault.passportNumber : vault.identityNumber; }
-
 export function assertSafeToolMetadata(tools: SealedToolset, vault: MockPrivateVault): void {
   for (const tool of Object.values(tools)) {
     if (containsRawPrivateValue(tool.description, vault) || containsRawPrivateValue(tool.inputSchema, vault)) throw new Error("Sealed blocked unsafe tool metadata");
@@ -206,13 +204,12 @@ export function createSealedToolset({ vault, store, now = () => new Date() }: Se
 
   const requestPrivateBinding: SealedToolset["request_private_binding"] = {
     name: "request_private_binding", title: "Request private binding",
-    description: `Request the active fixed private binding. Human approval is mandatory. The raw credential is consumed locally to create a random opaque session-bound artifact; guarded egress returns only its non-secret reference.`,
+    description: `Request the active fixed private binding. The page verifies credential availability locally, then human approval creates a random opaque session-bound artifact. The artifact does not encode the raw credential; guarded egress returns only its non-secret reference.`,
     inputSchema: enumInputSchema("field", [scenario.binding.id], scenario.binding.guidance), annotations: { readOnlyHint: false, untrustedContentHint: false },
     execute: async ({ field }) => guarded(async () => {
       const state = assertRuntime("request_private_binding");
       if (field !== scenario.binding.id) throw new Error("Unsupported private field for active scenario");
       if (state.bindingArtifacts[field]) throw new Error("Private binding is already sealed for this demo session");
-      const rawCredential = privateCredential(vault, field);
       if (!scenario.binding.isAvailable(vault)) throw new Error("Private binding value unavailable");
       const approved = await store.requestPrivateBindingApproval(field);
       const current = assertRuntime("request_private_binding");
@@ -220,12 +217,12 @@ export function createSealedToolset({ vault, store, now = () => new Date() }: Se
         store.recordAgentActivity({ activity: createActivityEntry({ toolName: "request_private_binding", input: { field }, output: { status: "denied", field } }), lastToolResponse: "Private binding was not approved." });
         throw new Error("Private binding was not approved");
       }
-      const artifact = createLocalBindingArtifact({ value: rawCredential, field, scenarioId: current.scenarioId, demoSession: current.demoSession, now: now() });
+      const artifact = createLocalBindingArtifact({ field, scenarioId: current.scenarioId, demoSession: current.demoSession, now: now() });
       const response = guardSafeEgress({ content: [{ type: "text", text: "Opaque private binding created locally. Raw value withheld." }], structuredContent: { status: "bound" as const, field, value: "withheld" as const, binding_ref: artifact.ref } }, vault) as PrivateBindingResponse;
       store.dispatch({
         type: "private_binding_completed", field, artifact,
         activity: createActivityEntry({ toolName: "request_private_binding", input: { field }, output: response.structuredContent }),
-        boundaryLedgerEntry: createBoundaryLedgerEntry({ scenario: scenario.id, capability: field, localOperation: "opaque_binding", guardedPayload: { status: "bound", field, value: "withheld", binding_ref: artifact.ref } }),
+        boundaryLedgerEntry: createBoundaryLedgerEntry({ scenario: scenario.id, capability: field, localOperation: "opaque_binding", guardedResponse: response }),
         lastToolResponse: response.content[0].text,
       });
       return response;
@@ -248,7 +245,7 @@ export function createSealedToolset({ vault, store, now = () => new Date() }: Se
       store.dispatch({
         type: "private_requirement_evaluated", requirement, result, snapshot,
         activity: createActivityEntry({ toolName: "evaluate_private_requirement", input: { requirement }, output: { status: result, requirement, value: "withheld" } }),
-        boundaryLedgerEntry: createBoundaryLedgerEntry({ scenario: scenario.id, capability: requirement, localOperation: "predicate_evaluation", guardedPayload: { status: result, requirement, value: "withheld" } }),
+        boundaryLedgerEntry: createBoundaryLedgerEntry({ scenario: scenario.id, capability: requirement, localOperation: "predicate_evaluation", guardedResponse: response }),
         lastToolResponse: response.content[0].text,
       });
       return response;
