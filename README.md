@@ -1,10 +1,79 @@
 # Sealed
 
-Sealed is a focused rental application demo for the OpenAI WebMCP Challenge. It
-demonstrates a narrow contract:
+Sealed is a rental-application prototype built for the OpenAI WebMCP Challenge.
+It demonstrates a privacy boundary in which an agent can use a private value to
+reach an approved decision or binding without receiving the raw value itself.
 
-> The page may use private data to complete an approved operation, while the
-> agent receives only a safe decision or status.
+**Production demo:** [https://sealed-ten-chi.vercel.app](https://sealed-ten-chi.vercel.app)
+
+## Core WebMCP insight
+
+The page owns a small local mock vault. WebMCP gives the agent narrow,
+state-aware capabilities over that page:
+
+- `evaluate_private_requirement` compares private income with public rent and
+  returns only `satisfied` or `not_satisfied`; income is returned as `withheld`.
+- `request_private_binding` asks the user to approve a local passport binding
+  and returns only `bound`; the passport number is never returned.
+
+WebMCP is essential because the agent calls capabilities implemented by the
+page that already holds the private context. A normal chat or form integration
+would need the value to cross into the agent's context. Sealed instead exposes
+the operation and its safe result, not the secret.
+
+## Human approval boundary
+
+A passport binding does not change state immediately. The agent can request it,
+but the page opens a human approval dialog. Only **Approve binding** completes
+the local operation. Moving the draft to human review is also deliberately not
+submission: `request_review` returns `submitted: false`, and there is no
+`submit_application` tool.
+
+## Dynamic tool surface
+
+The registered tool set follows the application state, reducing accidental or
+irrelevant actions:
+
+| State | Available tools |
+| --- | --- |
+| Step 1 — applicant | context, public fields, uncertainty, passport binding, private eligibility |
+| Step 2 — property | Step 1 tools plus human review |
+| Step 3 — review | context, uncertainty, human review, passport binding, private eligibility |
+| Review requested | context and uncertainty only |
+
+Current tool names:
+
+- `get_application_context` — reads public draft data, requirements, open
+  questions, and redacted private statuses.
+- `set_public_fields` — updates allowlisted public fields only.
+- `flag_uncertain` — records a fixed topic for human attention.
+- `request_review` — moves the draft to human review without submitting it.
+- `request_private_binding` — requests an approved local passport binding.
+- `evaluate_private_requirement` — evaluates income eligibility locally and
+  returns only the decision.
+
+## Architecture
+
+- Next.js 16 and React 19 client application.
+- `document.modelContext` registers the active WebMCP tools; an
+  `AbortController` removes the previous surface when state changes.
+- One external store and reducer back the human UI, WebMCP handlers, activity
+  log, privacy trace, and last safe tool response.
+- A client-side mock vault supplies demo-only private values.
+- WebMCP Activity records redacted agent calls; Privacy Trace records private
+  operations and whether values crossed the DOM or WebMCP boundary.
+
+## Privacy invariants
+
+- Raw income and passport values never appear in tool inputs or outputs.
+- Raw private values are not rendered into the page or HTML inputs.
+- `set_public_fields` rejects private or sealed fields.
+- Private eligibility returns only a decision.
+- Passport binding requires human approval and returns only status.
+- Review never submits or sends an application.
+
+These invariants are covered by automated tests, but this remains a browser
+prototype rather than a production security boundary.
 
 ## Run locally
 
@@ -13,9 +82,9 @@ npm install
 npm run dev
 ```
 
-Then open `http://localhost:3000`.
+Open `http://localhost:3000`. No environment variables are required.
 
-Useful checks:
+Verification commands:
 
 ```bash
 npm test
@@ -23,73 +92,26 @@ npm run lint
 npm run build
 ```
 
-## Deploy to Vercel
+## Test with ChatGPT Desktop
 
-This is a standard Next.js app and does not require environment variables for
-the demo. From this directory, authenticate with Vercel and create a preview
-deployment:
+1. Open the ChatGPT Desktop built-in browser.
+2. Navigate to https://sealed-ten-chi.vercel.app and confirm that the page shows
+   **Site tools ready**.
+3. Ask: `Use get_application_context and tell me which public fields are missing.`
+4. Ask: `Use set_public_fields to set full name to "Aylin Mammadova" and email to "aylin@example.com".`
+5. Continue to the property step, then ask:
+   `Use evaluate_private_requirement to check income_3x_rent without revealing income.`
+6. Ask: `Use request_private_binding for passport_number without revealing the raw value.`
+   Approve the page's binding dialog.
+7. Continue to review and ask:
+   `Use request_review. Do not submit or send the application.`
+8. Confirm the WebMCP Activity entries, two private Privacy Trace operations,
+   `submitted: false`, and the two-tool post-review surface.
 
-```bash
-npx vercel login
-npx vercel --yes
-```
+## Prototype scope
 
-Use `npx vercel --yes --prod` only when a production deployment is intended.
-
-## WebMCP proof
-
-The client component feature-detects `document.modelContext` and registers a
-step-aware tool surface through the current imperative API:
-
-- `get_application_context`: reads the current public draft, fixed section
-  requirements, open question IDs, and redacted private statuses in one response.
-- `set_public_fields`: updates only public application fields.
-- `flag_uncertain`: records one fixed topic for human attention.
-- `request_review`: moves the draft to human review; it never submits anything.
-
-- `request_private_binding`: asks for human approval, marks the passport field as
-  locally bound, and returns `value: "withheld"`.
-- `evaluate_private_requirement`: compares private monthly income with the
-  public monthly rent and returns only `satisfied` or `not_satisfied`.
-
-Step 1 keeps the two validated private tools available for the real ChatGPT
-demo, Step 2 adds `request_review`, and Step 3 removes public-field mutation
-while keeping the private checks available. After `request_review`, only the
-context read and uncertainty flag remain. The active surface never exceeds six
-tools. Each surface is owned by a fresh `AbortController`; aborting the previous
-signal removes the old registrations before the current surface is exposed.
-
-Browsers without WebMCP support show that status in the header. The user-facing
-private cards explain the agent-first flow; a private passport binding opens the
-same human approval modal before the shared state changes. Developer-only
-handler controls are available only in development mode.
-
-The application is presented as a three-step rental wizard. The Agent access
-card shows the active site-tool count and current surface, while the WebMCP
-Activity panel records every agent call with redacted input/output. The Privacy
-Trace panel records only private operations.
-
-The application state, activity log, privacy trace, and last tool response live
-in one external store (`lib/sealed-store.ts`). Both the developer debug controls
-and the native WebMCP `execute` handlers dispatch through that same reducer, so
-a real agent call updates the visible page without a refresh.
-
-## Privacy invariant
-
-The tests verify that the mock vault values do not appear in:
-
-- tool inputs or structured/text tool outputs;
-- rendered page text;
-- HTML input values.
-
-The vault is intentionally a client-side mock for a hackathon demo. It is not
-a production secret store: anyone with browser developer tools can inspect the
-demo bundle. A production version would replace it with a browser-managed
-credential/vault boundary and explicit user approval.
-
-## Deliberate MVP boundary
-
-There is no backend, LLM integration, application submission, authentication,
-or real vault. The page models one rental application template, exposes six
-allowlisted tools through a dynamic surface, and deliberately has no
-`submit_application` tool.
+Sealed is a hackathon demo, not real rental screening, a production secret
+vault, or a system for making housing decisions. It has no backend,
+authentication, real credential storage, landlord integration, or submission
+flow. The bundled private values are inspectable demo fixtures and must not be
+treated as production secrets.
