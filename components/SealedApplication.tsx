@@ -177,14 +177,14 @@ export function SealedApplication() {
           {(Object.keys(SCENARIOS) as ScenarioId[]).map((id) => (
             <button key={id} className={id === scenarioId ? "scenario-button scenario-button-active" : "scenario-button"} aria-label={SCENARIOS[id].shortLabel} aria-pressed={id === scenarioId} onClick={() => changeScenario(id)} type="button">
               <span aria-hidden="true">{SCENARIOS[id].shortLabel}</span>
-              <small aria-hidden="true">{id === "rental" ? "Primary demo" : "Reuse proof"}</small>
+              <small aria-hidden="true">{id === "rental" ? "Primary demo" : "Reuse example"}</small>
             </button>
           ))}
         </div>
       </section>
 
       <section className="hero" id="top">
-        <div className="hero-copy"><p className="eyebrow">{scenarioId === "rental" ? "Primary demo · Rental application" : "Reuse proof · Membership enrollment"}</p><h1>Agent gets the decision.<span>Not the secret.</span></h1><p className="hero-lede"><strong>{scenario.title}</strong> {scenario.lede}</p></div>
+        <div className="hero-copy"><p className="eyebrow">{scenarioId === "rental" ? "Primary demo · Rental application" : "Reuse example · Membership enrollment"}</p><h1>Agent gets the decision.<span>Not the secret.</span></h1><p className="hero-lede"><strong>{scenario.title}</strong> {scenario.lede}</p></div>
         <div className="hero-promise"><span className="hero-promise-icon"><Icon name="shield" size={22} /></span><div><p className="hero-promise-label">Selective disclosure via WebMCP</p><p>A private value is used locally. Guarded egress releases only an allowlisted result; the raw value is withheld from the agent.</p></div></div>
       </section>
 
