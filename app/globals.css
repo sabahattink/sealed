@@ -1991,6 +1991,124 @@ summary:focus-visible {
   }
 }
 
+.primitive-banner {
+  align-items: center;
+  background: linear-gradient(120deg, #0d2a25, #123a32);
+  border: 1px solid rgba(123, 231, 194, 0.22);
+  border-radius: 18px;
+  color: #effcf7;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  margin: 20px auto 0;
+  max-width: 1180px;
+  padding: 16px 18px 16px 20px;
+}
+
+.primitive-banner > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.primitive-banner strong {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.primitive-banner > div:first-child > span:last-child {
+  color: #b7d8cc;
+  font-size: 12px;
+}
+
+.primitive-kicker {
+  color: #72e0bb;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.scenario-switcher {
+  background: rgba(4, 19, 17, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.scenario-button,
+.demo-reset {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.scenario-button {
+  border-radius: 8px;
+  color: #a9c9be;
+  font-size: 12px;
+  font-weight: 750;
+  padding: 9px 13px;
+}
+
+.scenario-button:hover,
+.scenario-button:focus-visible {
+  color: #fff;
+}
+
+.scenario-button-active {
+  background: #e8fff7;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  color: #153d34;
+}
+
+.demo-reset {
+  border: 1px solid #d8e1dd;
+  border-radius: 999px;
+  color: #52615c;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 7px 11px;
+}
+
+.demo-reset:hover,
+.demo-reset:focus-visible {
+  border-color: #8ba59c;
+  color: #173d34;
+}
+
+.field select {
+  appearance: none;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 48px;
+  padding: 0 14px;
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .primitive-banner {
+    align-items: stretch;
+    flex-direction: column;
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
+  .scenario-switcher,
+  .scenario-button {
+    flex: 1;
+  }
+
+  .demo-reset {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

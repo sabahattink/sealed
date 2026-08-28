@@ -5,9 +5,12 @@ import { SealedApplication } from "@/components/SealedApplication";
 import {
   createMockPrivateVault,
   DEMO_CANARY_SECRET,
+  MEMBERSHIP_BIRTH_DATE,
+  MEMBERSHIP_CANARY_SECRET,
 } from "@/lib/private-vault";
 import {
   ACTIVE_TOOL_NAMES_BY_STEP,
+  ACTIVE_TOOL_NAMES_BY_SCENARIO,
   createSealedToolset,
   getActiveSealedToolNames,
   registerSealedTools,
@@ -16,8 +19,177 @@ import {
 import { createSealedStore, sealedStore } from "@/lib/sealed-store";
 
 beforeEach(() => {
+  sealedStore.setScenario("rental");
   sealedStore.reset();
   delete (document as Document & { modelContext?: ModelContext }).modelContext;
+});
+
+describe("reusable scenario privacy architecture", () => {
+  function createMembershipToolset() {
+    const store = createSealedStore("membership");
+    const vault = createMockPrivateVault();
+    return { store, vault, tools: createSealedToolset({ store, vault }) };
+  }
+
+  it("derives membership schemas and policies from the active scenario", () => {
+    const { tools } = createMembershipToolset();
+    const publicSchema = JSON.stringify(tools.set_public_fields.inputSchema);
+
+    expect(publicSchema).toContain("display_name");
+    expect(publicSchema).toContain("membership_plan");
+    expect(publicSchema).not.toContain("monthly_rent");
+    expect(publicSchema).not.toContain("identity_number");
+    expect(tools.evaluate_private_requirement.inputSchema).toMatchObject({
+      properties: { requirement: { enum: ["age_18_plus"] } },
+    });
+    expect(tools.request_private_binding.inputSchema).toMatchObject({
+      properties: { field: { enum: ["identity_number"] } },
+    });
+  });
+
+  it("executes membership age evaluation and approved identity binding without disclosure", async () => {
+    const { store, vault, tools } = createMembershipToolset();
+    const requirement = await tools.evaluate_private_requirement.execute({
+      requirement: "age_18_plus",
+    });
+    const bindingPromise = tools.request_private_binding.execute({
+      field: "identity_number",
+    });
+    store.resolvePrivateBindingApproval(true);
+    const binding = await bindingPromise;
+    const serialized = JSON.stringify({ requirement, binding, snapshot: store.getSnapshot() });
+
+    expect(requirement.structuredContent).toEqual({
+      status: "satisfied",
+      requirement: "age_18_plus",
+      value: "withheld",
+    });
+    expect(binding.structuredContent).toEqual({
+      status: "bound",
+      field: "identity_number",
+      value: "withheld",
+    });
+    expect(store.getSnapshot().privacyTrace.map((entry) => entry.scenario)).toEqual([
+      "membership",
+      "membership",
+    ]);
+    expect(serialized).not.toContain(vault.identityNumber);
+    expect(serialized).not.toContain(vault.dateOfBirth);
+  });
+
+  it("rejects cross-scenario fields, requirements, and bindings", async () => {
+    const { store, tools } = createMembershipToolset();
+    const before = store.getSnapshot();
+
+    expect(() => tools.set_public_fields.execute({
+      fields: { monthly_rent: 1200 },
+    })).toThrow("active-scenario public fields only");
+    expect(() => tools.evaluate_private_requirement.execute({
+      requirement: "income_3x_rent",
+    })).toThrow("active scenario");
+    await expect(tools.request_private_binding.execute({
+      field: "passport_number",
+    })).rejects.toThrow("active scenario");
+    expect(store.getSnapshot()).toEqual(before);
+  });
+
+  it("keeps dynamic surfaces and the no-submit invariant in both scenarios", () => {
+    for (const scenarioId of ["rental", "membership"] as const) {
+      const store = createSealedStore(scenarioId);
+      expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
+        ACTIVE_TOOL_NAMES_BY_SCENARIO[scenarioId][1],
+      );
+      store.setWizardStep(2);
+      expect(getActiveSealedToolNames(store.getSnapshot())).toEqual(
+        ACTIVE_TOOL_NAMES_BY_SCENARIO[scenarioId][2],
+      );
+      store.requestReview();
+      expect(getActiveSealedToolNames(store.getSnapshot())).toEqual([
+        "get_application_context",
+        "flag_uncertain",
+      ]);
+    }
+    expect(JSON.stringify(ACTIVE_TOOL_NAMES_BY_SCENARIO)).not.toContain("submit");
+    expect(SEALED_TOOL_NAMES).not.toContain("submit_application");
+  });
+
+  it("resets the active demo scenario, logs, review state, and pending approval", async () => {
+    const { store, tools } = createMembershipToolset();
+    await tools.evaluate_private_requirement.execute({ requirement: "age_18_plus" });
+    const pending = tools.request_private_binding.execute({ field: "identity_number" });
+    store.setPublicField("display_name", "Aylin");
+    store.setWizardStep(3);
+    store.requestReview();
+
+    store.reset();
+    await expect(pending).rejects.toThrow("cancelled by demo reset");
+    expect(store.getSnapshot()).toMatchObject({
+      scenarioId: "membership",
+      currentStep: 1,
+      reviewState: "not_requested",
+      activity: [],
+      privacyTrace: [],
+      pendingBindingApproval: null,
+    });
+    expect(store.getSnapshot().workflow.publicFields.display_name).toBe("");
+  });
+
+  it("switches the visible workflow and re-registers a scenario-specific surface", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+    render(<SealedApplication />);
+    await waitFor(() => expect(screen.getByTestId("site-tools-status")).toHaveTextContent("5 tools"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Membership" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Create your public profile" })).toBeVisible());
+    await waitFor(() => {
+      const requirementRegistrations = registerTool.mock.calls.filter(
+        ([tool]) => tool.name === "evaluate_private_requirement",
+      );
+      expect(requirementRegistrations.at(-1)?.[0].inputSchema).toMatchObject({
+        properties: { requirement: { enum: ["age_18_plus"] } },
+      });
+    });
+    expect(screen.getByText("Date of birth")).toBeVisible();
+    expect(screen.getByText("Identity number")).toBeVisible();
+  });
+
+  it("keeps both membership canaries out of rendered and observable state", async () => {
+    const registerTool = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: { registerTool },
+    });
+    render(<SealedApplication />);
+    fireEvent.click(screen.getByRole("button", { name: "Membership" }));
+    await waitFor(() => expect(screen.getByTestId("site-tools-status")).toHaveTextContent("5 tools"));
+    const requirementTool = registerTool.mock.calls.filter(
+      ([tool]) => tool.name === "evaluate_private_requirement",
+    ).at(-1)?.[0];
+    const bindingTool = registerTool.mock.calls.filter(
+      ([tool]) => tool.name === "request_private_binding",
+    ).at(-1)?.[0];
+    const requirement = await requirementTool.execute({ requirement: "age_18_plus" });
+    const bindingPromise = bindingTool.execute({ field: "identity_number" });
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: /approve binding/i }));
+    const binding = await bindingPromise;
+    const observable = JSON.stringify({
+      requirement,
+      binding,
+      snapshot: sealedStore.getSnapshot(),
+      html: document.documentElement.outerHTML,
+      registrations: registerTool.mock.calls,
+    });
+
+    expect(observable).not.toContain(MEMBERSHIP_CANARY_SECRET);
+    expect(observable).not.toContain(MEMBERSHIP_BIRTH_DATE);
+    expect(document.body.textContent).toContain("Privacy trace");
+    expect(document.body.textContent).toContain("age_18_plus");
+  });
 });
 
 function createTestToolset() {
@@ -197,7 +369,7 @@ describe("sealed WebMCP tool contracts", () => {
     });
 
     const snapshot = store.getSnapshot();
-    expect(snapshot.application.fullName).toBe("Aylin Mammadova");
+    expect(snapshot.workflow.publicFields.full_name).toBe("Aylin Mammadova");
     expect(snapshot.reviewState).toBe("requested");
     expect(snapshot.uncertainTopics).toEqual(["property_details"]);
     expect(snapshot.activity).toHaveLength(5);
@@ -223,7 +395,7 @@ describe("sealed WebMCP tool contracts", () => {
     ).toThrow("sealed fields cannot be edited");
 
     const after = store.getSnapshot();
-    expect(after.application).toEqual(before.application);
+    expect(after.workflow).toEqual(before.workflow);
     expect(after.activity).toHaveLength(0);
     expect(JSON.stringify(after)).not.toContain(vault.passportNumber);
   });
@@ -359,8 +531,8 @@ describe("sealed WebMCP tool contracts", () => {
       field: "passport_number",
       value: "withheld",
     });
-    expect(store.getSnapshot().application.requirementResult).toBe("satisfied");
-    expect(store.getSnapshot().application.privateBindings.passport_number).toBe(
+    expect(store.getSnapshot().workflow.requirementResults.income_3x_rent).toBe("satisfied");
+    expect(store.getSnapshot().workflow.privateBindings.passport_number).toBe(
       "bound",
     );
     expect(store.getSnapshot().activity).toHaveLength(2);

@@ -1,3 +1,11 @@
+import type {
+  PrivateFieldId,
+  PublicFieldId,
+  RequirementId,
+  ScenarioId,
+  UncertaintyTopic,
+} from "@/lib/scenarios";
+
 export type ActivityToolName =
   | "get_application_context"
   | "set_public_fields"
@@ -8,44 +16,21 @@ export type ActivityToolName =
 
 export type RedactedToolInput =
   | Record<string, never>
-  | {
-      fields: readonly string[];
-    }
-  | {
-      topic: "income_eligibility" | "passport_number" | "property_details";
-    }
-  | { field: "passport_number" }
-  | { requirement: "income_3x_rent" };
+  | { fields: readonly PublicFieldId[] }
+  | { topic: UncertaintyTopic }
+  | { field: PrivateFieldId }
+  | { requirement: RequirementId };
 
 export type RedactedToolOutput =
-  | {
-      status: "ok";
-      returned: "application_context";
-    }
-  | {
-      status: "updated";
-      updated_fields: readonly string[];
-    }
-  | {
-      status: "denied";
-      field: "passport_number";
-    }
-  | {
-      status: "flagged";
-      topic: "income_eligibility" | "passport_number" | "property_details";
-    }
-  | {
-      status: "review_requested";
-      submitted: false;
-    }
-  | {
-      status: "bound";
-      field: "passport_number";
-      value: "withheld";
-    }
+  | { status: "ok"; returned: "application_context"; scenario: ScenarioId }
+  | { status: "updated"; updated_fields: readonly PublicFieldId[] }
+  | { status: "denied"; field: PrivateFieldId }
+  | { status: "flagged"; topic: UncertaintyTopic }
+  | { status: "review_requested"; submitted: false }
+  | { status: "bound"; field: PrivateFieldId; value: "withheld" }
   | {
       status: "satisfied" | "not_satisfied";
-      requirement: "income_3x_rent";
+      requirement: RequirementId;
       value: "withheld";
     };
 
@@ -61,7 +46,8 @@ export type AgentActivityEntry = Readonly<{
 export type PrivacyTraceEntry = Readonly<{
   id: string;
   timestamp: string;
-  capability: "passport_number" | "income_3x_rent";
+  scenario: ScenarioId;
+  capability: PrivateFieldId | RequirementId;
   localVaultAccess: "YES";
   domExposure: "NO";
   webmcpInputExposure: "NO";
@@ -80,11 +66,7 @@ function now() {
   return new Date().toISOString();
 }
 
-export function createActivityEntry({
-  toolName,
-  input,
-  output,
-}: {
+export function createActivityEntry({ toolName, input, output }: {
   toolName: ActivityToolName;
   input: RedactedToolInput;
   output: RedactedToolOutput;
@@ -99,16 +81,15 @@ export function createActivityEntry({
   };
 }
 
-export function createPrivacyTraceEntry({
-  capability,
-  returnedResult,
-}: {
+export function createPrivacyTraceEntry({ scenario, capability, returnedResult }: {
+  scenario: ScenarioId;
   capability: PrivacyTraceEntry["capability"];
   returnedResult: PrivacyTraceEntry["returnedResult"];
 }): PrivacyTraceEntry {
   return {
     id: nextEventId("privacy"),
     timestamp: now(),
+    scenario,
     capability,
     localVaultAccess: "YES",
     domExposure: "NO",
