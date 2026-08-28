@@ -45,7 +45,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 function statusLabel(status: WebMcpStatus, count: number) {
   if (status === "ready") return `Site tools ready · ${count} tools`;
   if (status === "registering") return "Registering site tools";
-  if (status === "unsupported") return "Site tools unavailable · 0 tools";
+  if (status === "unsupported") return "WebMCP browser needed";
   if (status === "error") return "Site tools registration failed";
   return "Checking site tools";
 }
