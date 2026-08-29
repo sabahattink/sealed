@@ -559,7 +559,7 @@ describe("sealed application UI and native registration", () => {
     const review = await reviewTool.execute({});
 
     expect(review.structuredContent).toMatchObject({ status: "review_requested", submitted: false });
-    await waitFor(() => expect(screen.getByTestId("site-tools-status")).toHaveTextContent("Site tools ready · 2 tools"));
+    await waitFor(() => expect(screen.getByTestId("site-tools-status")).toHaveTextContent("Site tools registered · 2 tools"));
     expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("Safety lock · 2 tools remain");
     expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("Only Workflow context and Flag uncertainty stay available.");
     expect(screen.getByTestId("review-tool-surface")).toHaveTextContent("No submit or enrollment tool is exposed.");
@@ -579,10 +579,16 @@ describe("sealed application UI and native registration", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 5 tools",
+        "Site tools registered · 5 tools",
       ),
     );
     expect(screen.getByTestId("active-tool-count")).toHaveTextContent("5");
+    expect(screen.getByLabelText("Privacy and WebMCP status")).toHaveTextContent(
+      "Registered on this page; agent discovery depends on the current browser session",
+    );
+    expect(screen.getByLabelText("Privacy and WebMCP status")).not.toHaveTextContent(
+      "Available to the connected agent",
+    );
     expect(registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(
       [...ACTIVE_TOOL_NAMES_BY_STEP[1]],
     );
@@ -598,7 +604,7 @@ describe("sealed application UI and native registration", () => {
     render(<SealedApplication />);
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 5 tools",
+        "Site tools registered · 5 tools",
       ),
     );
     const firstSignal = registerTool.mock.calls[0][1].signal as AbortSignal;
@@ -613,7 +619,7 @@ describe("sealed application UI and native registration", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 6 tools",
+        "Site tools registered · 6 tools",
       ),
     );
     expect(firstSignal.aborted).toBe(true);
@@ -622,7 +628,7 @@ describe("sealed application UI and native registration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 5 tools",
+        "Site tools registered · 5 tools",
       ),
     );
     expect(secondSignal.aborted).toBe(true);
@@ -673,7 +679,7 @@ describe("sealed application UI and native registration", () => {
     render(<SealedApplication />);
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 5 tools",
+        "Site tools registered · 5 tools",
       ),
     );
     const registeredTool = registerTool.mock.calls.find(
@@ -716,7 +722,7 @@ describe("sealed application UI and native registration", () => {
     render(<SealedApplication />);
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 5 tools",
+        "Site tools registered · 5 tools",
       ),
     );
     const registeredTool = registerTool.mock.calls.find(
@@ -757,7 +763,7 @@ describe("rental application privacy boundary", () => {
     render(<SealedApplication />);
     await waitFor(() =>
       expect(screen.getByTestId("site-tools-status")).toHaveTextContent(
-        "Site tools ready · 5 tools",
+        "Site tools registered · 5 tools",
       ),
     );
     const bindingTool = registerTool.mock.calls.find(

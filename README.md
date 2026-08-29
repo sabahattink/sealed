@@ -204,7 +204,8 @@ npm run build
 ## ChatGPT Desktop demo
 
 Open the production URL inside a WebMCP-capable ChatGPT Desktop built-in browser
-and confirm **Site tools ready**.
+and confirm **Site tools registered**. This label confirms page-local
+registration; the browser session must still discover the current page surface.
 
 ### Rental — primary flow
 

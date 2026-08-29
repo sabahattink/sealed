@@ -43,7 +43,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 }
 
 function statusLabel(status: WebMcpStatus, count: number) {
-  if (status === "ready") return `Site tools ready · ${count} tools`;
+  if (status === "ready") return `Site tools registered · ${count} tools`;
   if (status === "registering") return "Registering site tools";
   if (status === "unsupported") return "WebMCP browser needed";
   if (status === "error") return "Site tools registration failed";
@@ -238,9 +238,9 @@ export function SealedApplication() {
 
         <aside className="trust-rail" aria-label="Privacy and WebMCP status">
           <section className="rail-card connection-card">
-            <div className="rail-card-heading"><span className="rail-icon rail-icon-blue"><Icon name="activity" size={19} /></span><div><p className="section-kicker">WebMCP connection</p><h2>Agent access</h2></div></div>
-            <div className={`connection-status connection-status-${webMcpStatus}`}><span className="connection-status-dot" /><div><strong>{statusLabel(webMcpStatus, visibleToolCount)}</strong><span>{webMcpStatus === "ready" ? "Available to the connected agent" : webMcpStatus === "unsupported" ? "Open in a WebMCP-capable browser" : "Checking the page connection"}</span></div></div>
-            <div className="active-tools-summary" data-testid="active-tool-count"><span className="active-tools-number">{visibleToolCount}</span><div><strong>{webMcpStatus === "ready" ? "Active site tools" : "Tools in this workflow state"}</strong><span>{webMcpStatus === "ready" ? "Available to the connected agent" : "Connect WebMCP to activate this surface"}</span></div></div>
+            <div className="rail-card-heading"><span className="rail-icon rail-icon-blue"><Icon name="activity" size={19} /></span><div><p className="section-kicker">WebMCP connection</p><h2>Registration state</h2></div></div>
+            <div className={`connection-status connection-status-${webMcpStatus}`}><span className="connection-status-dot" /><div><strong>{statusLabel(webMcpStatus, visibleToolCount)}</strong><span>{webMcpStatus === "ready" ? "Registered on this page; agent discovery depends on the current browser session" : webMcpStatus === "unsupported" ? "Open in a WebMCP-capable browser" : "Checking the page registration"}</span></div></div>
+            <div className="active-tools-summary" data-testid="active-tool-count"><span className="active-tools-number">{visibleToolCount}</span><div><strong>{webMcpStatus === "ready" ? "Registered site tools" : "Tools in this workflow state"}</strong><span>{webMcpStatus === "ready" ? "The browser must discover this current page surface" : "Connect WebMCP to register this surface"}</span></div></div>
             <div className="tool-surface"><span className="tool-surface-label">Current surface</span><div className="tool-surface-list">{activeToolNames.map((name) => <span className="tool-chip" key={name}>{baseToolLabels[name]}</span>)}</div></div>
             <div className="access-list"><div className={`access-row ${canEvaluatePrivateRequirement ? "access-row-allowed" : "access-row-blocked"}`}><span><Icon name={canEvaluatePrivateRequirement ? "check" : "close"} size={14} /></span><div><strong>Evaluate a private predicate</strong><small>{canEvaluatePrivateRequirement ? "Decision only" : "Unavailable in current state"}</small></div></div><div className={`access-row ${canRequestPrivateBinding ? "access-row-allowed" : "access-row-blocked"}`}><span><Icon name={canRequestPrivateBinding ? "check" : "close"} size={14} /></span><div><strong>Request a sealed binding</strong><small>{canRequestPrivateBinding ? "Human approval required" : "Unavailable in current state"}</small></div></div><div className="access-row access-row-blocked"><span><Icon name="close" size={14} /></span><div><strong>Read raw private values</strong><small>Never available to the agent</small></div></div></div>
           </section>
